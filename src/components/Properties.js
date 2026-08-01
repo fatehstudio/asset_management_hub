@@ -154,7 +154,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     });
 
     // Automatically add the tenant to Contacts if they do not exist
-    const contactExists = contacts.some(c => c.name.toLowerCase() === tenantForm.name.toLowerCase() && c.role === 'Tenant');
+    const contactExists = contacts.some(c => c.name && tenantForm.name && c.name.toLowerCase() === tenantForm.name.toLowerCase() && c.role === 'Tenant');
     if (!contactExists) {
       saveItem('contacts', {
         name: tenantForm.name,
@@ -221,11 +221,11 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
 
   // Filter properties
   const filteredProperties = properties.filter(prop => {
-    const matchesSearch = prop.name.toLowerCase().includes(search.toLowerCase()) || 
-                          prop.address.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = (prop.name || '').toLowerCase().includes(search.toLowerCase()) || 
+                          (prop.address || '').toLowerCase().includes(search.toLowerCase());
     
     const ownerName = getOwnerName(prop.ownerId);
-    const isOwn = prop.ownerId === "con-1" || ownerName.toLowerCase().includes("self") || ownerName.toLowerCase().includes("ahmad");
+    const isOwn = prop.ownerId === "con-1" || (ownerName || '').toLowerCase().includes("self") || (ownerName || '').toLowerCase().includes("ahmad");
     
     if (filterOwner === 'Own') return matchesSearch && isOwn;
     if (filterOwner === 'Client') return matchesSearch && !isOwn;
