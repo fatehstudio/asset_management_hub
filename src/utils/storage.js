@@ -439,7 +439,8 @@ function mapKeys(obj, table) {
       "Status": "status",
       "Monthly Rent": "monthlyRent",
       "Deposit Collected": "depositCollected",
-      "Start Date": "startDate"
+      "Start Date": "startDate",
+      "Notes": "notes"
     },
     Tenants: {
       "Tenant ID": "id",

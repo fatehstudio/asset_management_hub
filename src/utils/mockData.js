@@ -53,7 +53,8 @@ export const INITIAL_MOCK_DATA = {
       status: "Rented",
       monthlyRent: 2200,
       depositCollected: 4400,
-      startDate: "2025-01-01"
+      startDate: "2025-01-01",
+      notes: "Key in mailbox. Maintenance contact: En. Rosli"
     },
     {
       id: "prop-2",
@@ -64,7 +65,8 @@ export const INITIAL_MOCK_DATA = {
       status: "Rented",
       monthlyRent: 1800,
       depositCollected: 3600,
-      startDate: "2025-03-15"
+      startDate: "2025-03-15",
+      notes: "Paddy fields rental nearby. Check boundary markings annually."
     }
   ],
   tenants: [

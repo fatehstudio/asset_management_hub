@@ -20,7 +20,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
   const [activeProperty, setActiveProperty] = useState(null);
   
   // Property Form fields
-  const [propForm, setPropForm] = useState({ id: '', name: '', address: '', type: 'Condominium', ownerId: 'con-1', status: 'Vacant', monthlyRent: 0, depositCollected: 0, startDate: '' });
+  const [propForm, setPropForm] = useState({ id: '', name: '', address: '', type: 'Condominium', ownerId: 'con-1', status: 'Vacant', monthlyRent: 0, depositCollected: 0, startDate: '', notes: '' });
   
   // Tenant Form fields
   const [tenantForm, setTenantForm] = useState({ id: '', propertyId: '', name: '', icPassport: '', phone: '', emergencyContact: '', startDate: '', endDate: '', status: 'Active' });
@@ -68,7 +68,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     if (prop) {
       setPropForm({ ...prop });
     } else {
-      setPropForm({ id: '', name: '', address: '', type: 'Condominium', ownerId: 'con-1', status: 'Vacant', monthlyRent: 0, depositCollected: 0, startDate: '' });
+      setPropForm({ id: '', name: '', address: '', type: 'Condominium', ownerId: 'con-1', status: 'Vacant', monthlyRent: 0, depositCollected: 0, startDate: '', notes: '' });
     }
     setView('form-property');
   };
@@ -273,6 +273,10 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
               </select>
             </div>
           </div>
+          <div class="form-group" style="margin-top: 15px;">
+            <label>Notes</label>
+            <textarea class="form-control" rows="3" placeholder="Enter property notes, details, paddy fields rental records..." value=${propForm.notes} onInput=${e => setPropForm({ ...propForm, notes: e.target.value })}></textarea>
+          </div>
           <div class="modal-actions">
             <button type="button" class="btn btn-secondary" onClick=${() => setView(activeProperty ? 'detail' : 'list')}>Cancel</button>
             <button type="submit" class="btn btn-primary">Save Property</button>
@@ -419,6 +423,13 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
             <div class="detail-cell-value">${currency} ${Number(activeProperty.depositCollected).toFixed(2)}</div>
           </div>
         </div>
+
+        ${activeProperty.notes && html`
+          <div class="card" style="margin-top: 24px; padding: 14px 18px; border-left: 4px solid var(--color-primary);">
+            <div style="font-weight: 700; font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">Property Notes</div>
+            <div style="font-size: 0.95rem; line-height: 1.5; color: var(--text-primary); white-space: pre-wrap;">${activeProperty.notes}</div>
+          </div>
+        `}
 
         <!-- Two Column Details -->
         <div class="content-grid-2">
