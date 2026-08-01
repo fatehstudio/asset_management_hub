@@ -97,6 +97,27 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     }
   };
 
+  const handleDeleteTenant = (tenantId, prop) => {
+    if (confirm('Are you sure you want to remove this tenant? This will delete the tenant record, active rental agreement, and set the property back to vacant.')) {
+      // 1. Delete tenant
+      deleteItem('tenants', tenantId);
+      
+      // 2. De-active rental agreements
+      const activeRA = rentalAgreements.find(ra => ra.propertyId === prop.id && ra.status === 'Active');
+      if (activeRA) {
+        deleteItem('rentalAgreements', activeRA.id);
+      }
+      
+      // 3. Set property status back to Vacant
+      const updatedProp = { ...prop, status: 'Vacant' };
+      saveItem('properties', updatedProp);
+      
+      // 4. Update state
+      setActiveProperty(updatedProp);
+      setView('detail');
+    }
+  };
+
   const handleOpenFormTenant = (propId, tenant = null) => {
     if (tenant) {
       setTenantForm({ ...tenant });
@@ -439,8 +460,13 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
             <div class="card">
               <div class="card-title">
                 <span>Tenant & Tenancy Agreement</span>
-                ${!propTenant && html`
+                ${!propTenant ? html`
                   <button class="btn btn-primary btn-sm" onClick=${() => handleOpenFormTenant(activeProperty.id)}><${PlusIcon} /> Assign Tenant</button>
+                ` : html`
+                  <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-secondary btn-sm" onClick=${() => handleOpenFormTenant(activeProperty.id, propTenant)}><${EditIcon} /> Edit Tenant</button>
+                    <button class="btn btn-danger btn-sm" onClick=${() => handleDeleteTenant(propTenant.id, activeProperty)}><${TrashIcon} /> Remove</button>
+                  </div>
                 `}
               </div>
               
