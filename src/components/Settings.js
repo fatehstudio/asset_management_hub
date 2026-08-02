@@ -1,6 +1,7 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getDb, saveDb, saveItem, deleteItem, exportBackup, importBackup, resetDatabase, exportToCSV, syncFromGoogleSheets } from '../utils/storage.js';
+import { getDb, saveDb, saveItem, deleteItem, exportBackup, importBackup, resetDatabase, exportToCSV } from '../utils/storage.js';
 import { PlusIcon, TrashIcon, ArrowBackIcon } from './Icons.js';
+import { SUPABASE_SQL_SCHEMA } from '../utils/supabaseSchema.js';
 
 export default function Settings() {
   const [contacts, setContacts] = useState([]);
@@ -12,11 +13,15 @@ export default function Settings() {
   const [contactForm, setContactForm] = useState({ id: '', name: '', phone: '', email: '', role: 'Tenant' });
   const [importStatus, setImportStatus] = useState('');
 
-  // Sheets sync states
-  const [googleSheetsUrl, setGoogleSheetsUrl] = useState('');
-  const [googleSheetsWriteUrl, setGoogleSheetsWriteUrl] = useState('');
-  const [syncStatus, setSyncStatus] = useState('');
-  const [syncing, setSyncing] = useState(false);
+  // Supabase connection states
+  const [supabaseUrl, setSupabaseUrl] = useState('');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState('');
+  const [connecting, setConnecting] = useState(false);
+
+  // App Lock PIN states
+  const [appLockPin, setAppLockPin] = useState('');
+  const [newPin, setNewPin] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -30,11 +35,9 @@ export default function Settings() {
     if (db.settings) {
       setCurrency(db.settings.currency || 'RM');
       setTheme(db.settings.theme || 'dark');
-      setGoogleSheetsUrl(db.settings.googleSheetsUrl || localStorage.getItem('mms_google_sheets_url') || '');
-      setGoogleSheetsWriteUrl(db.settings.googleSheetsWriteUrl || localStorage.getItem('mms_google_sheets_write_url') || '');
-    } else {
-      setGoogleSheetsUrl(localStorage.getItem('mms_google_sheets_url') || '');
-      setGoogleSheetsWriteUrl(localStorage.getItem('mms_google_sheets_write_url') || '');
+      setSupabaseUrl(db.settings.supabaseUrl || '');
+      setSupabaseAnonKey(db.settings.supabaseAnonKey || '');
+      setAppLockPin(db.settings.appLockPin || '');
     }
   };
 
@@ -92,39 +95,71 @@ export default function Settings() {
     }
   };
 
-  const handleSheetsSync = async (e) => {
+  const handleSupabaseConnect = async (e) => {
     e.preventDefault();
-    if (!googleSheetsUrl) {
-      setSyncStatus('❌ Please enter your Google Sheets Share Link first.');
+    if (!supabaseUrl || !supabaseAnonKey) {
+      setConnectionStatus('❌ Please enter both the Project URL and Anon Key.');
       return;
     }
-    setSyncing(true);
-    setSyncStatus('⏳ Syncing all 26 sheets from Google Drive... Please wait.');
+    setConnecting(true);
+    setConnectionStatus('⏳ Verifying connection to your Supabase tables...');
+    
     try {
-      localStorage.setItem('mms_google_sheets_url', googleSheetsUrl);
+      const { testSupabaseConnection, resetSupabaseInstance, syncAllFromSupabase, subscribeToRealtimeChanges } = await import('../utils/storage.js');
+      // Test connection
+      await testSupabaseConnection(supabaseUrl, supabaseAnonKey);
       
+      // Save credentials in settings local storage
       const db = getDb();
       if (!db.settings) db.settings = {};
-      db.settings.googleSheetsUrl = googleSheetsUrl;
+      db.settings.supabaseUrl = supabaseUrl;
+      db.settings.supabaseAnonKey = supabaseAnonKey;
       saveDb(db);
-
-      await syncFromGoogleSheets(googleSheetsUrl);
-      setSyncStatus('✅ Sync complete! Your laptop dashboard is now updated with your live AppSheet data.');
+      
+      // Reset instance and trigger startup cloud sync
+      resetSupabaseInstance();
+      setConnectionStatus('⏳ Connection verified! Importing cloud tables...');
+      await syncAllFromSupabase();
+      subscribeToRealtimeChanges();
+      
+      setConnectionStatus('✅ Connected! Your local dashboard is fully synchronized with Supabase in the cloud.');
     } catch (err) {
-      setSyncStatus(`❌ Sync failed: ${err.message}. Make sure your Google Sheet is shared as "Anyone with link can view".`);
+      setConnectionStatus(`❌ Connection failed: ${err.message}. Ensure your URL, Anon Key, and database tables are set up correctly.`);
     } finally {
-      setSyncing(false);
+      setConnecting(false);
     }
   };
 
-  const handleSaveWriteUrl = (e) => {
+  const handleSavePin = (e) => {
     e.preventDefault();
+    if (!newPin || isNaN(newPin) || newPin.length < 4 || newPin.length > 6) {
+      alert("Please enter a valid numeric PIN code (between 4 and 6 digits).");
+      return;
+    }
     const db = getDb();
     if (!db.settings) db.settings = {};
-    db.settings.googleSheetsWriteUrl = googleSheetsWriteUrl;
-    localStorage.setItem('mms_google_sheets_write_url', googleSheetsWriteUrl);
+    db.settings.appLockPin = newPin;
     saveDb(db);
-    alert('✅ Google Sheets Write URL saved! Edits made on this laptop dashboard will now automatically sync back to Google Sheets.');
+    setAppLockPin(newPin);
+    setNewPin('');
+    alert("✅ App Lock PIN configured successfully!");
+  };
+
+  const handleClearPin = () => {
+    if (confirm("Are you sure you want to disable App Lock PIN? Seseorang yang meminjam laptop anda akan terus dapat mengakses dashboard ini tanpa PIN.")) {
+      const db = getDb();
+      if (db.settings) {
+        db.settings.appLockPin = "";
+        saveDb(db);
+      }
+      setAppLockPin('');
+      alert("✅ App Lock PIN disabled.");
+    }
+  };
+
+  const handleCopySchema = () => {
+    navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
+    alert("✅ SQL Setup Script copied to clipboard! Paste it inside Supabase SQL Editor.");
   };
 
   return html`
@@ -146,49 +181,66 @@ export default function Settings() {
             </div>
           </div>
 
-          <!-- Google Sheets & AppSheet Sync -->
+          <!-- Supabase Database Sync -->
           <div class="card">
-            <div class="card-title">Google Sheets / AppSheet Live Sync</div>
+            <div class="card-title">Supabase Database Connection</div>
             <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:16px;">
-              Sync data in real-time from your phone! Paste your Google Sheets share link below to load the live entries you added via AppSheet on your phone.
+              Connect to your private, real-time Supabase cloud database to automatically sync edits made on your mobile phone or tablet instantly.
             </p>
-            <form onSubmit=${handleSheetsSync}>
+            <form onSubmit=${handleSupabaseConnect}>
               <div class="form-group">
-                <input type="text" class="form-control" placeholder="https://docs.google.com/spreadsheets/d/..." value=${googleSheetsUrl} onInput=${e => setGoogleSheetsUrl(e.target.value)} disabled=${syncing} required />
-                <p style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">
-                  ⚠️ **Requirement**: Click **Share** inside your Google Sheet, and change General Access to **"Anyone with the link can view"** so this browser can fetch it.
-                </p>
+                <label>Supabase Project URL</label>
+                <input type="text" class="form-control" placeholder="https://yourproject.supabase.co" value=${supabaseUrl} onInput=${e => setSupabaseUrl(e.target.value)} disabled=${connecting} required />
               </div>
-              <button type="submit" class="btn btn-primary" disabled=${syncing}>
-                ${syncing ? 'Syncing...' : 'Sync Live Data Now'}
+              <div class="form-group" style="margin-top: 12px;">
+                <label>Supabase Anon Key</label>
+                <input type="password" class="form-control" placeholder="eyJhbGciOi..." value=${supabaseAnonKey} onInput=${e => setSupabaseAnonKey(e.target.value)} disabled=${connecting} required />
+              </div>
+              <button type="submit" class="btn btn-primary" style="margin-top: 14px;" disabled=${connecting}>
+                ${connecting ? 'Connecting...' : 'Verify & Connect to Supabase'}
               </button>
             </form>
-            ${syncStatus && html`
-              <p style="margin-top:14px; font-weight:700; font-size:0.9rem; color: ${syncStatus.startsWith('❌') ? 'hsl(var(--color-danger))' : syncStatus.startsWith('✅') ? 'hsl(var(--color-success))' : 'var(--text-primary)'}">
-                ${syncStatus}
+            ${connectionStatus && html`
+              <p style="margin-top:14px; font-weight:700; font-size:0.9rem; color: ${connectionStatus.startsWith('❌') ? 'hsl(var(--color-danger))' : connectionStatus.startsWith('✅') ? 'var(--color-success)' : 'var(--text-primary)'}">
+                ${connectionStatus}
               </p>
             `}
           </div>
 
-          <!-- Link Local Dashboard to Google Sheets (Write-back) -->
+          <!-- App Lock PIN Security -->
           <div class="card">
-            <div class="card-title">Google Sheets Two-Way Write Sync (Optional)</div>
+            <div class="card-title">Security PIN Lock</div>
             <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:16px;">
-              Want to write data back to Google Sheets when you edit details on this laptop dashboard? Paste your Google Apps Script Web App URL below:
+              Configure a 4-to-6 digit security PIN code to restrict access to this dashboard when shared or hosted publicly online.
             </p>
-            <form onSubmit=${handleSaveWriteUrl}>
-              <div class="form-group">
-                <input type="text" class="form-control" placeholder="https://script.google.com/macros/s/.../exec" value=${googleSheetsWriteUrl} onInput=${e => setGoogleSheetsWriteUrl(e.target.value)} />
-                <p style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">
-                  💡 **Setup Instructions**:
-                  <br />1. In your Google Sheet, click **Extensions** → **Apps Script**.
-                  <br />2. Paste the provided sync script, click **Deploy** → **New Deployment**.
-                  <br />3. Select **Web App**, set *Execute as* to **"Me"**, and *Who has access* to **"Anyone"**.
-                  <br />4. Deploy, copy the Web App URL, and paste it above!
-                </p>
+            ${appLockPin ? html`
+              <div style="display:flex; justify-content:space-between; align-items:center; background: var(--bg-primary); padding: 12px; border-radius: var(--radius-md); border:1px solid var(--border-color);">
+                <div>
+                  <span style="font-size:0.85rem; font-weight:700; color:var(--text-primary);">PIN Lock Active</span>
+                  <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Your app locks automatically on startup.</p>
+                </div>
+                <button class="btn btn-danger btn-sm" onClick=${handleClearPin}>Disable PIN</button>
               </div>
-              <button type="submit" class="btn btn-secondary">Save Web App Write URL</button>
-            </form>
+            ` : html`
+              <form onSubmit=${handleSavePin}>
+                <div class="form-group" style="display:flex; gap:12px; align-items:end;">
+                  <div style="flex:1;">
+                    <label>Set Numeric PIN Code</label>
+                    <input type="password" maxlength="6" class="form-control" placeholder="Enter 4-6 digits" value=${newPin} onInput=${e => setNewPin(e.target.value.replace(/\D/g, ''))} required />
+                  </div>
+                  <button type="submit" class="btn btn-secondary">Activate App Lock</button>
+                </div>
+              </form>
+            `}
+          </div>
+
+          <!-- Database SQL Setup Script copy card -->
+          <div class="card">
+            <div class="card-title">Supabase SQL Schema Script</div>
+            <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:16px;">
+              Copy this database setup SQL code. Open the SQL Editor in your Supabase dashboard, paste this script, and click Run.
+            </p>
+            <button class="btn btn-secondary" onClick=${handleCopySchema}>Copy SQL Setup Code</button>
           </div>
 
           <!-- Backup & Recovery JSON -->

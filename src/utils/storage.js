@@ -19,7 +19,32 @@ export function getDb() {
 }
 
 export function saveDb(db) {
+  const oldDbStr = localStorage.getItem(STORAGE_KEY);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  
+  // Sync changed settings to Supabase if connected
+  const client = getSupabase();
+  if (client && oldDbStr) {
+    try {
+      const oldDb = JSON.parse(oldDbStr);
+      if (JSON.stringify(oldDb.settings) !== JSON.stringify(db.settings)) {
+        const rows = Object.entries(db.settings || {})
+          .filter(([key]) => key !== 'supabaseUrl' && key !== 'supabaseAnonKey') // Don't write credentials to public DB table
+          .map(([key, val]) => ({
+            key: key,
+            value: typeof val === 'object' ? JSON.stringify(val) : String(val)
+          }));
+        if (rows.length > 0) {
+          client.from('settings').upsert(rows).then(({ error }) => {
+            if (error) console.error("Failed to sync settings to Supabase:", error);
+          });
+        }
+      }
+    } catch(e) {
+      console.error("Error diffing settings for Supabase sync:", e);
+    }
+  }
+
   // Dispatch custom event to notify other components/tabs of database changes
   window.dispatchEvent(new Event('mms_db_changed'));
 }
@@ -183,7 +208,7 @@ function mapKeysToSheet(obj, table) {
   return mapped;
 }
 
-export async function saveItem(table, item) {
+export function saveItem(table, item) {
   const db = getDb();
   if (!db[table]) {
     db[table] = [];
@@ -203,46 +228,31 @@ export async function saveItem(table, item) {
   
   saveDb(db);
 
-  // Sync to Google Sheets if write URL is configured
-  const writeUrl = db.settings?.googleSheetsWriteUrl;
-  if (writeUrl && table !== 'settings') {
-    try {
-      const sheetItem = mapKeysToSheet(item, table);
-      fetch(writeUrl, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", table: getSheetName(table), item: sheetItem })
-      });
-      console.log(`Synced save of ${table} to Google Sheets`);
-    } catch (e) {
-      console.error("Failed to sync save to Google Sheets:", e);
-    }
+  // Sync to Supabase in the background if connected
+  const client = getSupabase();
+  if (client && table !== 'settings') {
+    const sbTable = getSupabaseTableName(table);
+    client.from(sbTable).upsert(item).then(({ error }) => {
+      if (error) console.error(`Failed to sync save to Supabase [${sbTable}]:`, error);
+    });
   }
 
   return item;
 }
 
-export async function deleteItem(table, id) {
+export function deleteItem(table, id) {
   const db = getDb();
   if (db[table]) {
     db[table] = db[table].filter(item => item.id !== id);
     saveDb(db);
 
-    // Sync to Google Sheets if write URL is configured
-    const writeUrl = db.settings?.googleSheetsWriteUrl;
-    if (writeUrl && table !== 'settings') {
-      try {
-        fetch(writeUrl, {
-          method: "POST",
-          mode: "no-cors",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "delete", table: getSheetName(table), id: id })
-        });
-        console.log(`Synced delete of ${table} (${id}) to Google Sheets`);
-      } catch (e) {
-        console.error("Failed to sync delete to Google Sheets:", e);
-      }
+    // Sync to Supabase in the background if connected
+    const client = getSupabase();
+    if (client && table !== 'settings') {
+      const sbTable = getSupabaseTableName(table);
+      client.from(sbTable).delete().eq('id', id).then(({ error }) => {
+        if (error) console.error(`Failed to sync delete to Supabase [${sbTable}] id=${id}:`, error);
+      });
     }
     return true;
   }
@@ -754,6 +764,216 @@ export async function syncFromGoogleSheets(sheetUrl) {
 
   saveDb(db);
   return db;
+}
+
+// ========================================================
+// Supabase Client, Syncing & Realtime Engine
+// ========================================================
+
+let supabaseInstance = null;
+let realtimeChannel = null;
+
+export function getSupabase() {
+  if (supabaseInstance) return supabaseInstance;
+  const db = getDb();
+  const url = db.settings?.supabaseUrl;
+  const key = db.settings?.supabaseAnonKey;
+  if (url && key && window.supabase) {
+    supabaseInstance = window.supabase.createClient(url, key);
+    return supabaseInstance;
+  }
+  return null;
+}
+
+export function resetSupabaseInstance() {
+  if (realtimeChannel) {
+    realtimeChannel.unsubscribe();
+    realtimeChannel = null;
+  }
+  supabaseInstance = null;
+  return getSupabase();
+}
+
+function getSupabaseTableName(table) {
+  const mapping = {
+    rentalAgreements: "rental_agreements",
+    rentPayments: "rent_payments",
+    propertyLoans: "property_loans",
+    utilityBills: "utility_bills",
+    personalLoans: "personal_loans",
+    loanPayments: "loan_payments",
+    vehicleLoans: "vehicle_loans",
+    vehicleServices: "vehicle_services",
+    vehicleInspections: "vehicle_inspections",
+    vehicleRoadTax: "vehicle_road_tax",
+    vehicleInsurance: "vehicle_insurance",
+    financialTransactions: "financial_transactions",
+    activityLog: "activity_log"
+  };
+  return mapping[table] || table.toLowerCase();
+}
+
+function getJsTableName(table) {
+  const mapping = {
+    rental_agreements: "rentalAgreements",
+    rent_payments: "rentPayments",
+    property_loans: "propertyLoans",
+    utility_bills: "utilityBills",
+    personal_loans: "personalLoans",
+    loan_payments: "loanPayments",
+    vehicle_loans: "vehicleLoans",
+    vehicle_services: "vehicleServices",
+    vehicle_inspections: "vehicleInspections",
+    vehicle_road_tax: "vehicleRoadTax",
+    vehicle_insurance: "vehicleInsurance",
+    financial_transactions: "financialTransactions",
+    activity_log: "activityLog"
+  };
+  return mapping[table] || table;
+}
+
+export async function testSupabaseConnection(url, key) {
+  if (!window.supabase) {
+    throw new Error("Supabase SDK script is not loaded in index.html.");
+  }
+  try {
+    const tempClient = window.supabase.createClient(url, key);
+    const { data, error } = await tempClient.from('settings').select('*').limit(1);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error("Supabase test failed:", e);
+    throw new Error(e.message || "Failed to query database settings. Check URL and Key.");
+  }
+}
+
+export async function syncAllFromSupabase() {
+  const client = getSupabase();
+  if (!client) return null;
+
+  const db = getDb();
+  const tables = [
+    "contacts", "owners", "properties", "tenants", "rentalAgreements", "rentPayments",
+    "propertyLoans", "utilities", "utilityBills", "contractors", "maintenance",
+    "borrowers", "personalLoans", "loanPayments", "vehicles", "vehicleLoans",
+    "vehicleServices", "vehicleInspections", "vehicleRoadTax", "vehicleInsurance",
+    "financialTransactions", "documents", "activityLog", "settings"
+  ];
+
+  // Keep connection credentials locally
+  const newDb = {
+    settings: {
+      supabaseUrl: db.settings.supabaseUrl,
+      supabaseAnonKey: db.settings.supabaseAnonKey,
+      appLockPin: db.settings.appLockPin,
+      currency: "RM",
+      theme: db.settings.theme || "dark",
+      serviceTypes: [],
+      utilityTypes: [],
+      documentTypes: []
+    }
+  };
+
+  for (const table of tables) {
+    const sbTable = getSupabaseTableName(table);
+    const { data, error } = await client.from(sbTable).select('*');
+    if (error) {
+      console.warn(`Failed to fetch table "${sbTable}" from Supabase. Skipping.`, error);
+      continue;
+    }
+
+    if (table === "settings") {
+      (data || []).forEach(row => {
+        if (row.key) {
+          let parsedVal = row.value;
+          try {
+            parsedVal = JSON.parse(row.value);
+          } catch(e) {}
+          newDb.settings[row.key] = parsedVal;
+        }
+      });
+    } else {
+      newDb[table] = data || [];
+    }
+  }
+
+  // Ensure default lists are intact
+  if (!newDb.settings.serviceTypes || newDb.settings.serviceTypes.length === 0) {
+    newDb.settings.serviceTypes = db.settings.serviceTypes || ["Engine Oil & Filter", "Air & Cabin Filter", "Brake Pads & Discs", "Battery Replacement", "Tyres & Alignment", "Aircond Service", "Transmission Fluid", "Spark Plugs"];
+  }
+  if (!newDb.settings.utilityTypes || newDb.settings.utilityTypes.length === 0) {
+    newDb.settings.utilityTypes = db.settings.utilityTypes || ["TNB (Electricity)", "Air (Water)", "Internet/Broadband", "Indah Water (Sewerage)", "JMB/MC Maintenance Fee", "Cukai Pintu (Assessment Tax)", "Cukai Tanah (Quit Rent)"];
+  }
+  if (!newDb.settings.documentTypes || newDb.settings.documentTypes.length === 0) {
+    newDb.settings.documentTypes = db.settings.documentTypes || ["Rental Agreement", "Tenant Identity (IC/Passport)", "Utility Bill", "Payment Receipt", "Loan Agreement", "Insurance Policy", "Road Tax Disc", "Service Receipt", "Inspection Certificate"];
+  }
+
+  saveDb(newDb);
+  return newDb;
+}
+
+export function subscribeToRealtimeChanges() {
+  const client = getSupabase();
+  if (!client) return;
+
+  if (realtimeChannel) {
+    realtimeChannel.unsubscribe();
+    realtimeChannel = null;
+  }
+
+  realtimeChannel = client
+    .channel('public:all')
+    .on('postgres_changes', { event: '*', schema: 'public' }, (payload) => {
+      console.log('Realtime change payload:', payload);
+      const table = payload.table;
+      const eventType = payload.eventType;
+      const jsTable = getJsTableName(table);
+      
+      const db = getDb();
+      if (!db[jsTable]) db[jsTable] = [];
+
+      if (table === 'settings') {
+        const row = payload.new;
+        if (row && row.key) {
+          let parsedVal = row.value;
+          try {
+            parsedVal = JSON.parse(row.value);
+          } catch(e) {}
+          db.settings[row.key] = parsedVal;
+        }
+      } else {
+        if (eventType === 'DELETE') {
+          const oldRow = payload.old;
+          if (oldRow && oldRow.id) {
+            db[jsTable] = db[jsTable].filter(item => item.id !== oldRow.id);
+          }
+        } else {
+          const newRow = payload.new;
+          if (newRow && newRow.id) {
+            const index = db[jsTable].findIndex(i => i.id === newRow.id);
+            if (index !== -1) {
+              db[jsTable][index] = { ...db[jsTable][index], ...newRow };
+            } else {
+              db[jsTable].push(newRow);
+            }
+          }
+        }
+      }
+
+      // Save database locally (bypassing settings push to avoid loops)
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      
+      // Dispatch events
+      window.dispatchEvent(new Event('mms_db_changed'));
+      window.dispatchEvent(new CustomEvent('mms_supabase_sync_toast', { detail: `Updated ${table}` }));
+    })
+    .subscribe((status) => {
+      console.log("Supabase subscription status:", status);
+      const connectionEvent = new CustomEvent('mms_supabase_status', { 
+        detail: status === 'SUBSCRIBED' ? 'Live' : 'Offline' 
+      });
+      window.dispatchEvent(connectionEvent);
+    });
 }
 
 

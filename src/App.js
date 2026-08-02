@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from './utils/htm.js';
-import { getDb } from './utils/storage.js';
+import { getDb, getSupabase, subscribeToRealtimeChanges, syncAllFromSupabase } from './utils/storage.js';
 import { 
   DashboardIcon, PropertyIcon, VehicleIcon, LoanIcon, 
   UtilityIcon, MaintenanceIcon, ReminderIcon, FinancialIcon, 
@@ -26,32 +26,78 @@ export default function App() {
   const [selectedVehicleId, setSelectedVehicleId] = useState(null);
   const [overdueCount, setOverdueCount] = useState(0);
 
+  // Supabase, Toasts, and App Lock states
+  const [supabaseStatus, setSupabaseStatus] = useState('Offline');
+  const [toasts, setToasts] = useState([]);
+  const [isLocked, setIsLocked] = useState(false);
+  const [pinBuffer, setPinBuffer] = useState('');
+
   useEffect(() => {
-    // Initial theme set
+    // Initial theme & App Lock set
     const db = getDb();
     const activeTheme = db.settings?.theme || 'dark';
     setTheme(activeTheme);
     document.documentElement.setAttribute('data-theme', activeTheme);
     
+    if (db.settings?.appLockPin) {
+      setIsLocked(true);
+    }
+
     calculateOverdueCount();
 
-    // Auto-sync from Google Sheets in background on startup if URL is saved
-    const sheetUrl = db.settings?.googleSheetsUrl;
-    if (sheetUrl) {
-      import('./utils/storage.js').then(({ syncFromGoogleSheets }) => {
-        syncFromGoogleSheets(sheetUrl)
-          .then(() => console.log("Auto-synced live Google Sheets data on startup."))
-          .catch(err => console.warn("Auto-sync on startup failed:", err));
+    // Check overdue alerts on startup after a small delay
+    setTimeout(() => {
+      const freshDb = getDb();
+      let overdue = 0;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      
+      (freshDb.rentPayments || []).forEach(rp => {
+        if (rp.status === 'Pending' && rp.dueBy && rp.dueBy < todayStr) overdue++;
       });
+      (freshDb.utilityBills || []).forEach(ub => {
+        if (ub.status === 'Pending' && ub.dueDate && ub.dueDate < todayStr) overdue++;
+      });
+      (freshDb.vehicleInspections || []).forEach(vi => {
+        if (vi.nextDueDate && vi.nextDueDate < todayStr) overdue++;
+      });
+      (freshDb.vehicleRoadTax || []).forEach(vrt => {
+        if (vrt.expiryDate && vrt.expiryDate < todayStr) overdue++;
+      });
+      (freshDb.vehicleInsurance || []).forEach(vins => {
+        if (vins.expiryDate && vins.expiryDate < todayStr) overdue++;
+      });
+      
+      if (overdue > 0) {
+        showToast("⚠️ Overdue Deadlines", `You have ${overdue} overdue task(s) requiring attention!`, "warning");
+      }
+    }, 1500);
+
+    // Initialize Supabase & Subscribe Realtime
+    const client = getSupabase();
+    if (client) {
+      // Background sync from Supabase
+      syncAllFromSupabase()
+        .then(() => {
+          console.log("Supabase connection established and data synced.");
+          subscribeToRealtimeChanges();
+        })
+        .catch(err => {
+          console.warn("Supabase connection/sync failed:", err);
+          setSupabaseStatus('Offline');
+        });
     }
 
     // Listeners
     window.addEventListener('mms_db_changed', handleDbChange);
     window.addEventListener('change_tab', handleTabChange);
+    window.addEventListener('mms_supabase_status', handleSupabaseStatusChange);
+    window.addEventListener('mms_supabase_sync_toast', handleSupabaseSyncToast);
     
     return () => {
       window.removeEventListener('mms_db_changed', handleDbChange);
       window.removeEventListener('change_tab', handleTabChange);
+      window.removeEventListener('mms_supabase_status', handleSupabaseStatusChange);
+      window.removeEventListener('mms_supabase_sync_toast', handleSupabaseSyncToast);
     };
   }, []);
 
@@ -62,6 +108,67 @@ export default function App() {
   const handleTabChange = (e) => {
     if (e.detail) {
       setActiveTab(e.detail);
+    }
+  };
+
+  const handleSupabaseStatusChange = (e) => {
+    if (e.detail) setSupabaseStatus(e.detail);
+  };
+
+  const handleSupabaseSyncToast = (e) => {
+    if (e.detail) {
+      showToast("🔄 Database Synchronized", `Table '${e.detail.replace('Updated ', '')}' updated from mobile.`, "sync");
+    }
+  };
+
+  const showToast = (title, desc, type = 'sync') => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, title, desc, type, closing: false }]);
+    
+    // Animate closing after 3.7 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.map(t => t.id === id ? { ...t, closing: true } : t));
+    }, 3700);
+
+    // Remove from DOM after 4 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
+  const handlePinKeyPress = (val) => {
+    const db = getDb();
+    const correctPin = db.settings?.appLockPin;
+    if (!correctPin) return;
+
+    if (val === 'Clear') {
+      setPinBuffer('');
+      return;
+    }
+
+    if (val === 'Delete') {
+      setPinBuffer(prev => prev.slice(0, -1));
+      return;
+    }
+
+    const nextPin = pinBuffer + val;
+    if (nextPin.length <= correctPin.length) {
+      setPinBuffer(nextPin);
+      
+      // Check if code matches
+      if (nextPin === correctPin) {
+        setTimeout(() => {
+          setIsLocked(false);
+          setPinBuffer('');
+          showToast("🔓 Access Granted", "Welcome back to MMS Asset Hub!", "sync");
+        }, 150);
+      } else if (nextPin.length === correctPin.length) {
+        // Wrong PIN, reset buffer with alert
+        setTimeout(() => {
+          setPinBuffer('');
+          alert("Incorrect PIN code. Please try again.");
+        }, 200);
+      }
     }
   };
 
@@ -196,6 +303,42 @@ export default function App() {
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ];
 
+  if (isLocked) {
+    const db = getDb();
+    const correctPin = db.settings?.appLockPin || '';
+    const codeLength = correctPin.length || 4;
+    
+    return html`
+      <div class="lock-screen-overlay">
+        <div class="lock-screen-card">
+          <div class="lock-screen-logo">A</div>
+          <h2 style="font-weight: 800; font-size: 1.5rem; margin-bottom: 8px; color: var(--text-primary);">Asset Hub Locked</h2>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 24px;">Enter PIN Code to Unlock Dashboard</p>
+          
+          <!-- PIN Dots Indicator -->
+          <div class="pin-display-container">
+            ${Array.from({ length: codeLength }).map((_, i) => html`
+              <div key=${i} class="pin-digit-dot ${i < pinBuffer.length ? 'filled' : ''}"></div>
+            `)}
+          </div>
+          
+          <!-- Numeric Keypad -->
+          <div class="pin-keypad">
+            ${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'Delete', '0', 'Clear'].map(key => html`
+              <button 
+                key=${key} 
+                class="pin-key ${['Delete', 'Clear'].includes(key) ? 'action-key' : ''}" 
+                onClick=${() => handlePinKeyPress(key)}
+              >
+                ${key}
+              </button>
+            `)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   return html`
     <div class="app-container">
       
@@ -238,6 +381,14 @@ export default function App() {
               </li>
             `;
           })}
+
+          ${getDb().settings?.appLockPin && html`
+            <li class="sidebar-item" style="margin-top: auto; border-top: 1px solid var(--border-color); padding-top: 12px;">
+              <div class="sidebar-link" onClick=${() => setIsLocked(true)} style="color: var(--text-muted); cursor: pointer;">
+                <span>🔒 Lock Dashboard</span>
+              </div>
+            </li>
+          `}
         </ul>
         
         <div class="sidebar-footer">
@@ -256,6 +407,13 @@ export default function App() {
           </div>
           
           <div class="header-controls">
+            ${getDb().settings?.supabaseUrl && html`
+              <div class="connection-badge ${supabaseStatus === 'Live' ? 'live' : 'offline'}" title="Supabase Connection">
+                <span class="dot"></span>
+                <span>${supabaseStatus}</span>
+              </div>
+            `}
+
             <!-- Theme toggle button -->
             <button class="control-btn" onClick=${toggleTheme} title="Toggle Light/Dark Theme">
               ${theme === 'dark' ? html`<${SunIcon} />` : html`<${MoonIcon} />`}
@@ -274,6 +432,23 @@ export default function App() {
           ${renderView()}
         </section>
       </main>
+
+      <!-- Toast Container overlay -->
+      <div class="toast-container">
+        ${toasts.map(toast => html`
+          <div key=${toast.id} class="toast-item ${toast.closing ? 'closing' : ''} ${toast.type === 'warning' ? 'toast-warning' : 'toast-sync'}">
+            <div class="toast-content">
+              <div class="toast-title">
+                ${toast.type === 'warning' ? '⚠️' : '🔄'} ${toast.title}
+              </div>
+              <div class="toast-desc">${toast.desc}</div>
+            </div>
+            <button class="toast-close" onClick=${() => {
+              setToasts(prev => prev.filter(t => t.id !== toast.id));
+            }}>×</button>
+          </div>
+        `)}
+      </div>
 
     </div>
   `;

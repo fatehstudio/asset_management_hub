@@ -883,15 +883,234 @@ button, input, select, textarea {
 }
 
 /* File links */
-.file-link {
+.file-link:hover {
+  text-decoration: underline;
+}
+
+/* Toast Notifications styling */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 9999;
+  max-width: 350px;
+  width: calc(100% - 48px);
+}
+
+.toast-item {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  animation: toastSlideIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  transition: var(--transition-normal);
+}
+
+.toast-item.closing {
+  opacity: 0;
+  transform: translateX(100px) scale(0.9);
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(50px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.toast-content {
+  flex: 1;
+}
+
+.toast-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toast-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  color: var(--text-primary);
+}
+
+.toast-warning {
+  border-left: 4px solid hsl(var(--color-danger));
+}
+
+.toast-sync {
+  border-left: 4px solid var(--accent-color);
+}
+
+/* App Lock PIN Screen overlay */
+.lock-screen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-primary);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+.lock-screen-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  padding: 40px;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.lock-screen-logo {
+  background: var(--accent-color);
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  color: white;
+  font-weight: 900;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
+}
+
+.pin-display-container {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin: 30px 0;
+}
+
+.pin-digit-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color);
+  transition: var(--transition-fast);
+}
+
+.pin-digit-dot.filled {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  transform: scale(1.15);
+}
+
+.pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.pin-key {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 68px;
+  height: 68px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  user-select: none;
+}
+
+.pin-key:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  transform: scale(1.05);
+}
+
+.pin-key:active {
+  transform: scale(0.95);
+}
+
+.pin-key.action-key {
+  font-size: 0.95rem;
+  background: var(--bg-primary);
+}
+
+/* Database Connection Badge */
+.connection-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--accent-color);
-  font-weight: 600;
-  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
 }
 
-.file-link:hover {
-  text-decoration: underline;
+.connection-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse 1.8s infinite;
+}
+
+.connection-badge.live .dot {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.connection-badge.offline .dot {
+  background: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.85); opacity: 0.6; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(0.85); opacity: 0.6; }
 }

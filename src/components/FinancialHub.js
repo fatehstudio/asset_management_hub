@@ -3,7 +3,7 @@ import { getItems, saveItem, deleteItem, getDb, exportPropertyLedgerToCSV } from
 import { PlusIcon, EditIcon, TrashIcon, ArrowBackIcon } from './Icons.js';
 
 export default function FinancialHub() {
-  const [activeTab, setActiveTab] = useState('ledger'); // 'ledger', 'property-pl', 'vehicle-costs'
+  const [activeTab, setActiveTab] = useState('summary'); // 'summary', 'ledger', 'property-pl', 'vehicle-costs'
   const [transactions, setTransactions] = useState([]);
   const [properties, setProperties] = useState([]);
   const [vehicles, setVehicles] = useState([]);
@@ -145,6 +145,56 @@ export default function FinancialHub() {
 
   const currency = getDb().settings?.currency || "RM";
 
+  const getPortfolioSummary = () => {
+    const db = getDb();
+    
+    // Properties Calculations
+    let propRentIncome = 0;
+    let propExpenses = 0;
+    
+    (properties || []).forEach(p => {
+      const pl = getPropertyPL(p);
+      propRentIncome += pl.rentalIncome;
+      propExpenses += pl.totalExpense;
+    });
+
+    // Vehicles Calculations
+    let vehExpenses = 0;
+    (vehicles || []).forEach(v => {
+      const vc = getVehicleCosts(v);
+      vehExpenses += vc.total;
+    });
+
+    // Personal Loans Calculations
+    let totalLent = 0;
+    let totalRepaid = 0;
+    
+    (db.personalLoans || []).forEach(pl => {
+      totalLent += Number(pl.amountLent || 0);
+      const payments = (db.loanPayments || []).filter(pm => pm.loanId === pl.id);
+      totalRepaid += payments.reduce((sum, pm) => sum + Number(pm.amount || 0), 0);
+    });
+
+    const outstandingLending = totalLent - totalRepaid;
+    const lendingRecoveryRate = totalLent > 0 ? (totalRepaid / totalLent) * 100 : 0;
+
+    // Combined Cash Flow calculations
+    const netPropertyYield = propRentIncome - propExpenses;
+    const netCashFlow = netPropertyYield - vehExpenses + totalRepaid;
+
+    return {
+      propRentIncome,
+      propExpenses,
+      netPropertyYield,
+      vehExpenses,
+      totalLent,
+      totalRepaid,
+      outstandingLending,
+      lendingRecoveryRate,
+      netCashFlow
+    };
+  };
+
   const filteredTx = transactions.filter(tx => {
     const matchesSearch = tx.category.toLowerCase().includes(search.toLowerCase()) || 
                           (tx.notes || '').toLowerCase().includes(search.toLowerCase());
@@ -157,6 +207,9 @@ export default function FinancialHub() {
   return html`
     <div>
       <div class="tab-header">
+        <button class="tab-btn ${activeTab === 'summary' ? 'active' : ''}" onClick=${() => setActiveTab('summary')}>
+          Portfolio Summary
+        </button>
         <button class="tab-btn ${activeTab === 'ledger' ? 'active' : ''}" onClick=${() => setActiveTab('ledger')}>
           Ledger Transactions
         </button>
@@ -167,6 +220,113 @@ export default function FinancialHub() {
           Vehicle Cost Analysis
         </button>
       </div>
+
+      <!-- PORTFOLIO SUMMARY VIEW -->
+      ${activeTab === 'summary' && (() => {
+        const summary = getPortfolioSummary();
+        return html`
+          <div style="display:flex; flex-direction:column; gap:24px;">
+            <!-- Net Cash Flow Header Summary -->
+            <div class="card" style="background: linear-gradient(135deg, var(--accent-color) 0%, hsl(var(--color-primary-dark)) 100%); color: white; display: flex; justify-content: space-between; align-items: center; padding: 24px; border: none;">
+              <div>
+                <p style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.9; font-weight: 600;">Net Portfolio Cash Flow (Combined)</p>
+                <h1 style="font-size: 2.2rem; font-weight: 800; margin-top: 6px;">
+                  ${currency} ${summary.netCashFlow.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </h1>
+                <p style="font-size: 0.82rem; opacity: 0.85; margin-top: 8px;">
+                  Calculated from Property Net Yields, Vehicle Expenses, and Loan Repayments.
+                </p>
+              </div>
+              <div style="background: rgba(255,255,255,0.15); width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8rem;">
+                💰
+              </div>
+            </div>
+
+            <!-- Detailed Breakdowns -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+              <!-- Property yield summary card -->
+              <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 14px;">
+                    <h3 style="font-size: 1.1rem; font-weight: 700;">🏠 Property Portfolio Yield</h3>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between;">
+                      <span style="color: var(--text-muted); font-size: 0.88rem;">Rent Collected:</span>
+                      <span style="font-weight: 600; color: var(--color-success);">${currency} ${summary.propRentIncome.toLocaleString()}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                      <span style="color: var(--text-muted); font-size: 0.88rem;">Expenses (Loans/Bills):</span>
+                      <span style="font-weight: 600; color: hsl(var(--color-danger));">${currency} ${summary.propExpenses.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 14px; display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-weight: 600; font-size: 0.88rem;">Net Property Yield:</span>
+                  <span style="font-size: 1.2rem; font-weight: 800; color: ${summary.netPropertyYield >= 0 ? 'var(--color-success)' : 'hsl(var(--color-danger))'};">
+                    ${currency} ${summary.netPropertyYield.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Vehicle Cost Summary Card -->
+              <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 14px;">
+                    <h3 style="font-size: 1.1rem; font-weight: 700;">🚗 Fleet Maintenance Cost</h3>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
+                    <p style="font-size: 0.82rem; color: var(--text-secondary);">
+                      Accumulated costs for loans, insurance policies, road tax renewals, safety inspections, and servicing tasks.
+                    </p>
+                  </div>
+                </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 14px; display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-weight: 600; font-size: 0.88rem;">Total Spent:</span>
+                  <span style="font-size: 1.2rem; font-weight: 800; color: hsl(var(--color-danger));">
+                    ${currency} ${summary.vehExpenses.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Personal Loans Summary Card -->
+              <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 14px;">
+                    <h3 style="font-size: 1.1rem; font-weight: 700;">🤝 Personal Loans Lent</h3>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between;">
+                      <span style="color: var(--text-muted); font-size: 0.88rem;">Total Lent:</span>
+                      <span style="font-weight: 600;">${currency} ${summary.totalLent.toLocaleString()}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                      <span style="color: var(--text-muted); font-size: 0.88rem;">Total Repaid:</span>
+                      <span style="font-weight: 600; color: var(--color-success);">${currency} ${summary.totalRepaid.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <!-- Progress bar for recovery rate -->
+                  <div style="margin-bottom: 16px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">
+                      <span>Recovery Progress</span>
+                      <span>${summary.lendingRecoveryRate.toFixed(1)}%</span>
+                    </div>
+                    <div style="width: 100%; height: 6px; background: var(--border-color); border-radius: 3px; overflow: hidden;">
+                      <div style="width: ${summary.lendingRecoveryRate}%; height: 100%; background: var(--color-success);"></div>
+                    </div>
+                  </div>
+                </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 14px; display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-weight: 600; font-size: 0.88rem;">Outstanding Debt:</span>
+                  <span style="font-size: 1.2rem; font-weight: 800; color: var(--text-primary);">
+                    ${currency} ${summary.outstandingLending.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      })()}
 
       <!-- LEDGER VIEW -->
       ${activeTab === 'ledger' && html`
