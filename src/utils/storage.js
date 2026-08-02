@@ -101,6 +101,8 @@ function mapKeysToSheet(obj, table) {
     "address": "Address",
     "type": "Type",
     "ownerId": "Owner ID",
+    "propertyId": "Property ID",
+    "vehicleId": "Vehicle ID",
     "status": "Status",
     "monthlyRent": "Monthly Rent",
     "depositCollected": "Deposit Collected",
