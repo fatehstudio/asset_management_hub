@@ -14,7 +14,7 @@ export default function Utilities() {
   
   // Forms states
   const [accountForm, setAccountForm] = useState({ id: '', propertyId: '', type: 'TNB (Electricity)', accountNumber: '', responsibleParty: 'Tenant', lastCheckedDate: new Date().toISOString().slice(0, 10) });
-  const [billForm, setBillForm] = useState({ id: '', utilityId: '', billingMonth: '', dueDate: '', amount: 0, paidDate: '', paidAmount: 0, method: 'Online Banking', receiptLink: '', status: 'Pending' });
+  const [billForm, setBillForm] = useState({ id: '', utilityId: '', billingMonth: '', dueDate: '', amount: 0, paidDate: '', paidAmount: 0, method: 'Online Banking', receiptLink: '', status: 'Pending', notes: '' });
 
   useEffect(() => {
     loadData();
@@ -70,7 +70,7 @@ export default function Utilities() {
   };
   const handleOpenBillForm = (utilityId, bill = null) => {
     if (bill) {
-      setBillForm({ ...bill });
+      setBillForm({ notes: '', ...bill });
     } else {
       setBillForm({
         id: '',
@@ -82,7 +82,8 @@ export default function Utilities() {
         paidAmount: 0,
         method: 'Online Banking',
         receiptLink: '',
-        status: 'Pending'
+        status: 'Pending',
+        notes: ''
       });
     }
     setViewBillForm(true);
@@ -256,6 +257,11 @@ export default function Utilities() {
               <input type="text" class="form-control" placeholder="C:/receipts/..." value=${billForm.receiptLink} onInput=${e => setBillForm({ ...billForm, receiptLink: e.target.value })} />
             </div>
 
+            <div class="form-group">
+              <label>Notes (Catatan - Cth: Sudah maklumkan tenant)</label>
+              <textarea class="form-control" rows="2" placeholder="Masukkan catatan bil di sini..." value=${billForm.notes || ''} onInput=${e => setBillForm({ ...billForm, notes: e.target.value })}></textarea>
+            </div>
+
             <div class="modal-actions">
               <button type="button" class="btn btn-secondary" onClick=${() => setViewBillForm(false)}>Cancel</button>
               <button type="submit" class="btn btn-primary">Save Bill</button>
@@ -363,6 +369,11 @@ export default function Utilities() {
                         <td>
                           <div style="font-weight: 700;">${details.type}</div>
                           <div style="font-size: 0.72rem; color: var(--text-muted); margin-top:2px;">${details.property}</div>
+                          ${b.notes && html`
+                            <div style="font-size: 0.76rem; color: var(--accent-color); margin-top: 6px; display: flex; align-items: center; gap: 4px; font-style: italic;">
+                              <span>📝</span> ${b.notes}
+                            </div>
+                          `}
                         </td>
                         <td>${b.billingMonth}</td>
                         <td style="color: ${b.status === 'Pending' && b.dueDate < new Date().toISOString().slice(0,10) ? 'hsl(var(--color-danger))' : 'var(--text-primary)'}; font-weight: 600;">
