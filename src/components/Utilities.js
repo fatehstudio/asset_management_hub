@@ -13,7 +13,7 @@ export default function Utilities() {
   const [viewBillForm, setViewBillForm] = useState(false);
   
   // Forms states
-  const [accountForm, setAccountForm] = useState({ id: '', propertyId: '', type: 'TNB (Electricity)', accountNumber: '', responsibleParty: 'Tenant' });
+  const [accountForm, setAccountForm] = useState({ id: '', propertyId: '', type: 'TNB (Electricity)', accountNumber: '', responsibleParty: 'Tenant', lastCheckedDate: new Date().toISOString().slice(0, 10) });
   const [billForm, setBillForm] = useState({ id: '', utilityId: '', billingMonth: '', dueDate: '', amount: 0, paidDate: '', paidAmount: 0, method: 'Online Banking', receiptLink: '', status: 'Pending' });
 
   useEffect(() => {
@@ -38,7 +38,8 @@ export default function Utilities() {
         propertyId: properties[0]?.id || '',
         type: 'TNB (Electricity)',
         accountNumber: '',
-        responsibleParty: 'Tenant'
+        responsibleParty: 'Tenant',
+        lastCheckedDate: new Date().toISOString().slice(0, 10)
       });
     }
     setViewAccountForm(true);
@@ -60,7 +61,13 @@ export default function Utilities() {
       window.dispatchEvent(new Event('mms_db_changed'));
     }
   };
-
+  const handleMarkChecked = (u) => {
+    const updated = {
+      ...u,
+      lastCheckedDate: new Date().toISOString().slice(0, 10)
+    };
+    saveItem('utilities', updated);
+  };
   const handleOpenBillForm = (utilityId, bill = null) => {
     if (bill) {
       setBillForm({ ...bill });
@@ -280,28 +287,53 @@ export default function Utilities() {
           <div style="display:flex; flex-direction:column; gap:16px;">
             ${utilities.length === 0 ? html`
               <p style="color:var(--text-muted); font-size:0.88rem; padding:10px 0;">No active utility accounts registered.</p>
-            ` : utilities.filter(u => activePropertyId === 'All' || u.propertyId === activePropertyId).map(u => html`
-              <div key=${u.id} style="background:var(--bg-secondary); border:1px solid var(--border-color); padding:14px; border-radius:var(--radius-md);">
-                <div style="display:flex; justify-content:space-between; align-items:start;">
-                  <div>
-                    <div style="font-weight:700; font-size:0.95rem;">${u.type}</div>
-                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">Account: ${u.accountNumber}</div>
-                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">${getPropertyName(u.propertyId)}</div>
+            ` : utilities.filter(u => activePropertyId === 'All' || u.propertyId === activePropertyId).map(u => {
+              const lastChecked = u.lastCheckedDate || '';
+              let needsReview = false;
+              if (lastChecked) {
+                const diffTime = new Date() - new Date(lastChecked);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (diffDays >= 90) needsReview = true;
+              } else {
+                needsReview = true;
+              }
+
+              return html`
+                <div key=${u.id} style="background:var(--bg-secondary); border:1px solid ${needsReview ? 'hsla(var(--color-danger) / 0.5)' : 'var(--border-color)'}; padding:14px; border-radius:var(--radius-md); box-shadow: ${needsReview ? '0 0 10px hsla(var(--color-danger) / 0.05)' : 'none'};">
+                  <div style="display:flex; justify-content:space-between; align-items:start;">
+                    <div>
+                      <div style="font-weight:700; font-size:0.95rem; display:flex; align-items:center; gap:6px;">
+                        ${u.type}
+                        ${needsReview && html`<span class="badge badge-danger" style="font-size:0.6rem; padding: 2px 6px;">⚠️ Review Due</span>`}
+                      </div>
+                      <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">Account: ${u.accountNumber}</div>
+                      <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Last Checked: ${lastChecked || 'Never'}</div>
+                      <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">${getPropertyName(u.propertyId)}</div>
+                    </div>
+                    <div>
+                      <span class="badge ${u.responsibleParty === 'Tenant' ? 'badge-info' : 'badge-warning'}">
+                        Pays: ${u.responsibleParty}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <span class="badge ${u.responsibleParty === 'Tenant' ? 'badge-info' : 'badge-warning'}">
-                      Pays: ${u.responsibleParty}
-                    </span>
+                  
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; border-top:1px solid var(--border-color); padding-top:10px;">
+                    <div>
+                      ${needsReview && html`
+                        <button class="btn btn-secondary btn-sm" style="color:var(--color-success); border-color:var(--color-success); padding: 4px 8px; font-size:0.75rem;" onClick=${() => handleMarkChecked(u)}>
+                          ✓ Mark Reviewed
+                        </button>
+                      `}
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                      <button class="btn btn-primary btn-sm" onClick=${() => handleOpenBillForm(u.id)}><${PlusIcon} /> Log Bill</button>
+                      <button class="btn btn-secondary btn-sm" style="padding:4px 8px;" onClick=${() => handleOpenAccountForm(u)}><${EditIcon} /></button>
+                      <button class="btn btn-danger btn-sm" style="padding:4px 8px;" onClick=${() => handleDeleteAccount(u.id)}><${TrashIcon} /></button>
+                    </div>
                   </div>
                 </div>
-                
-                <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px; border-top:1px solid var(--border-color); padding-top:10px;">
-                  <button class="btn btn-primary btn-sm" onClick=${() => handleOpenBillForm(u.id)}><${PlusIcon} /> Log Bill</button>
-                  <button class="btn btn-secondary btn-sm" style="padding:4px 8px;" onClick=${() => handleOpenAccountForm(u)}><${EditIcon} /></button>
-                  <button class="btn btn-danger btn-sm" style="padding:4px 8px;" onClick=${() => handleDeleteAccount(u.id)}><${TrashIcon} /></button>
-                </div>
-              </div>
-            `)}
+              `;
+            })}
           </div>
         </div>
 

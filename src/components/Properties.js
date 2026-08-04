@@ -26,7 +26,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
   const [tenantForm, setTenantForm] = useState({ id: '', propertyId: '', name: '', icPassport: '', phone: '', emergencyContact: '', startDate: '', endDate: '', status: 'Active' });
   
   // Rent Payment Form fields
-  const [paymentForm, setPaymentForm] = useState({ id: '', propertyId: '', date: new Date().toISOString().slice(0,10), billingMonth: '', amount: 0, method: 'Bank Transfer', status: 'Paid', receiptLink: '' });
+  const [paymentForm, setPaymentForm] = useState({ id: '', propertyId: '', date: new Date().toISOString().slice(0,10), dueBy: new Date().toISOString().slice(0,10), billingMonth: '', amount: 0, method: 'Bank Transfer', status: 'Paid', receiptLink: '' });
 
   useEffect(() => {
     loadData();
@@ -176,15 +176,25 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     // Find last unpaid rent, or create a default month name
     const unpaid = rentPayments.find(rp => rp.propertyId === propId && rp.status === 'Pending');
     
+    // Find active tenant to locate the agreement due date day
+    const agreement = rentalAgreements.find(ra => ra.propertyId === propId && ra.status === 'Active');
+    const dueDay = agreement ? Number(agreement.dueDateDay) : 5;
+    
+    // Calculate default due date for the current billing cycle
+    const defaultDueDate = new Date();
+    defaultDueDate.setDate(dueDay);
+    const defaultDueDateStr = defaultDueDate.toISOString().slice(0, 10);
+
     setPaymentForm({
       id: unpaid ? unpaid.id : '',
       propertyId: propId,
-      date: new Date().toISOString().slice(0, 10),
+      date: unpaid && unpaid.date ? unpaid.date : new Date().toISOString().slice(0, 10),
+      dueBy: unpaid && unpaid.dueBy ? unpaid.dueBy : defaultDueDateStr,
       billingMonth: unpaid ? unpaid.billingMonth : new Date().toLocaleString('default', { month: 'long', year: 'numeric' }),
       amount: unpaid ? unpaid.amount : (prop ? prop.monthlyRent : 0),
-      method: 'Bank Transfer',
-      status: 'Paid',
-      receiptLink: ''
+      method: unpaid ? unpaid.method : 'Bank Transfer',
+      status: unpaid ? unpaid.status : 'Paid',
+      receiptLink: unpaid ? unpaid.receiptLink : ''
     });
     setView('form-payment');
   };
@@ -362,39 +372,49 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
         <form onSubmit=${handleSavePayment}>
           <div class="form-row">
             <div class="form-group">
-              <label>Payment Date</label>
-              <input type="date" class="form-control" value=${paymentForm.date} onInput=${e => setPaymentForm({ ...paymentForm, date: e.target.value })} required />
+              <label>Due Date (Tarikh Akhir Bayar)</label>
+              <input type="date" class="form-control" value=${paymentForm.dueBy || ''} onInput=${e => setPaymentForm({ ...paymentForm, dueBy: e.target.value })} required />
             </div>
             <div class="form-group">
-              <label>Rental Month</label>
+              <label>Rental Month (Bulan Sewa)</label>
               <input type="text" class="form-control" placeholder="e.g. August 2026" value=${paymentForm.billingMonth} onInput=${e => setPaymentForm({ ...paymentForm, billingMonth: e.target.value })} required />
             </div>
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Amount Received (${currency})</label>
+              <label>Amount (${currency})</label>
               <input type="number" class="form-control" value=${paymentForm.amount} onInput=${e => setPaymentForm({ ...paymentForm, amount: e.target.value })} required />
             </div>
             <div class="form-group">
-              <label>Payment Method</label>
-              <select class="form-control" value=${paymentForm.method} onChange=${e => setPaymentForm({ ...paymentForm, method: e.target.value })}>
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Cash">Cash</option>
-                <option value="Cheque">Cheque</option>
+              <label>Payment Status</label>
+              <select class="form-control" value=${paymentForm.status} onChange=${e => setPaymentForm({ ...paymentForm, status: e.target.value })}>
+                <option value="Paid">Paid (Telah Dibayar)</option>
+                <option value="Pending">Pending / Unpaid (Belum Dibayar)</option>
               </select>
             </div>
           </div>
-          <div class="form-group">
-            <label>Link to Receipt Document (URL or Local path)</label>
-            <input type="text" class="form-control" placeholder="C:/receipts/..." value=${paymentForm.receiptLink} onInput=${e => setPaymentForm({ ...paymentForm, receiptLink: e.target.value })} />
-          </div>
-          <div class="form-group">
-            <label>Payment Status</label>
-            <select class="form-control" value=${paymentForm.status} onChange=${e => setPaymentForm({ ...paymentForm, status: e.target.value })}>
-              <option value="Paid">Paid</option>
-              <option value="Pending">Pending / Unpaid</option>
-            </select>
-          </div>
+          
+          ${paymentForm.status === 'Paid' && html`
+            <div class="form-row" style="animation: fadeIn 0.25s ease;">
+              <div class="form-group">
+                <label>Payment Date (Tarikh Bayar)</label>
+                <input type="date" class="form-control" value=${paymentForm.date || ''} onInput=${e => setPaymentForm({ ...paymentForm, date: e.target.value })} required />
+              </div>
+              <div class="form-group">
+                <label>Payment Method</label>
+                <select class="form-control" value=${paymentForm.method} onChange=${e => setPaymentForm({ ...paymentForm, method: e.target.value })}>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group" style="animation: fadeIn 0.25s ease;">
+              <label>Link to Receipt Document (URL or Local path)</label>
+              <input type="text" class="form-control" placeholder="C:/receipts/..." value=${paymentForm.receiptLink} onInput=${e => setPaymentForm({ ...paymentForm, receiptLink: e.target.value })} />
+            </div>
+          `}
+          
           <div class="modal-actions">
             <button type="button" class="btn btn-secondary" onClick=${() => setView('detail')}>Cancel</button>
             <button type="submit" class="btn btn-primary">Save Rent Payment</button>
@@ -513,6 +533,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
                     <thead>
                       <tr>
                         <th>Month</th>
+                        <th>Due Date</th>
                         <th>Date Paid</th>
                         <th>Method</th>
                         <th>Status</th>
@@ -524,8 +545,9 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
                       ${propPayments.map(rp => html`
                         <tr key=${rp.id}>
                           <td>${rp.billingMonth}</td>
-                          <td>${rp.date || '-'}</td>
-                          <td>${rp.method || '-'}</td>
+                          <td><span style="font-weight: 600;">${rp.dueBy || '-'}</span></td>
+                          <td>${rp.status === 'Paid' ? rp.date : '-'}</td>
+                          <td>${rp.status === 'Paid' ? rp.method : '-'}</td>
                           <td>
                             <span class="badge ${rp.status === 'Paid' ? 'badge-success' : 'badge-warning'}">${rp.status}</span>
                           </td>
