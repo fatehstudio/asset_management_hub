@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getItems, getDb } from '../utils/storage.js';
+import { getItems, getDb, getDynamicRentStatus } from '../utils/storage.js?v=20260808-google-sheets-1';
 import { PropertyIcon, VehicleIcon, LoanIcon, FinancialIcon, ClockIcon } from './Icons.js';
 
 export default function Dashboard({ navigateToTab }) {
@@ -67,10 +67,9 @@ export default function Dashboard({ navigateToTab }) {
     let overdue = 0;
     const todayStr = new Date().toISOString().slice(0, 10);
     
-    // Check pending rent payments
-    (db.rentPayments || []).forEach(rp => {
-      if (rp.status === 'Pending' && rp.dueBy && rp.dueBy < todayStr) overdue++;
-    });
+    // Check pending rent payments (dynamically calculated)
+    const { overdueList: dynamicOverdue, pendingList: dynamicPending } = getDynamicRentStatus(db, todayStr);
+    overdue += dynamicOverdue.length;
     // Check pending utility bills
     (db.utilityBills || []).forEach(ub => {
       if (ub.status === 'Pending' && ub.dueDate && ub.dueDate < todayStr) overdue++;
@@ -112,21 +111,19 @@ export default function Dashboard({ navigateToTab }) {
     limitDate.setDate(limitDate.getDate() + 7);
     const limitDateStr = limitDate.toISOString().slice(0, 10);
 
-    // Rent
-    (db.rentPayments || []).forEach(rp => {
-      if (rp.status === 'Pending' && rp.dueBy) {
-        const propName = properties.find(p => p.id === rp.propertyId)?.name || 'Property';
-        const isOverdue = rp.dueBy < todayStr;
-        const isDueSoon = rp.dueBy >= todayStr && rp.dueBy <= limitDateStr;
-        if (isOverdue || isDueSoon) {
-          urgent.push({
-            id: `rent-${rp.id}`,
-            title: `Rent Due: ${propName}`,
-            subtitle: `${rp.billingMonth} - RM ${rp.amount}`,
-            date: rp.dueBy,
-            type: isOverdue ? 'overdue' : 'due-soon'
-          });
-        }
+    // Rent (dynamically calculated)
+    [...dynamicOverdue, ...dynamicPending].forEach(rp => {
+      const propName = properties.find(p => p.id === rp.propertyId)?.name || 'Property';
+      const isOverdue = rp.dueBy < todayStr;
+      const isDueSoon = rp.dueBy >= todayStr && rp.dueBy <= limitDateStr;
+      if (isOverdue || isDueSoon) {
+        urgent.push({
+          id: `rent-${rp.id}`,
+          title: `Rent Due: ${propName}`,
+          subtitle: `${rp.billingMonth} - RM ${rp.amount}`,
+          date: rp.dueBy,
+          type: isOverdue ? 'overdue' : 'due-soon'
+        });
       }
     });
 

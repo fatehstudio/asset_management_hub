@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from './utils/htm.js';
-import { getDb, getSupabase, subscribeToRealtimeChanges, syncAllFromSupabase } from './utils/storage.js';
+import { getDb, getSupabase, subscribeToRealtimeChanges, syncAllFromSupabase, syncFromGoogleSheets, getDynamicRentStatus } from './utils/storage.js?v=20260808-google-sheets-1';
 import { 
   DashboardIcon, PropertyIcon, VehicleIcon, LoanIcon, 
   UtilityIcon, MaintenanceIcon, ReminderIcon, FinancialIcon, 
@@ -7,7 +7,7 @@ import {
 } from './components/Icons.js';
 
 // Component imports
-import Dashboard from './components/Dashboard.js';
+import Dashboard from './components/ReferenceDashboard.js';
 import Properties from './components/Properties.js';
 import Vehicles from './components/Vehicles.js';
 import Loans from './components/Loans.js';
@@ -16,7 +16,7 @@ import Maintenance from './components/Maintenance.js';
 import Reminders from './components/Reminders.js';
 import FinancialHub from './components/FinancialHub.js';
 import Documents from './components/Documents.js';
-import Settings from './components/Settings.js';
+import Settings from './components/Settings.js?v=20260808-google-sheets-1';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -45,15 +45,23 @@ export default function App() {
 
     calculateOverdueCount();
 
+    if (db.settings?.googleSheetsUrl) {
+      syncFromGoogleSheets(db.settings.googleSheetsUrl, db.settings.googleAppsScriptUrl || '')
+        .then(() => setSupabaseStatus('Sheets'))
+        .catch(error => {
+          console.warn('Google Sheets startup sync failed:', error);
+          window.dispatchEvent(new CustomEvent('mms_google_sheets_sync', { detail: { success: false, error: error.message } }));
+        });
+    }
+
     // Check overdue alerts on startup after a small delay
     setTimeout(() => {
       const freshDb = getDb();
       let overdue = 0;
       const todayStr = new Date().toISOString().slice(0, 10);
       
-      (freshDb.rentPayments || []).forEach(rp => {
-        if (rp.status === 'Pending' && rp.dueBy && rp.dueBy < todayStr) overdue++;
-      });
+      const { overdueList } = getDynamicRentStatus(freshDb, todayStr);
+      overdue += overdueList.length;
       (freshDb.utilityBills || []).forEach(ub => {
         if (ub.status === 'Pending' && ub.dueDate && ub.dueDate < todayStr) overdue++;
       });
@@ -92,12 +100,16 @@ export default function App() {
     window.addEventListener('change_tab', handleTabChange);
     window.addEventListener('mms_supabase_status', handleSupabaseStatusChange);
     window.addEventListener('mms_supabase_sync_toast', handleSupabaseSyncToast);
+    window.addEventListener('mms_google_sheets_status', handleGoogleSheetsStatus);
+    window.addEventListener('mms_google_sheets_sync', handleGoogleSheetsSync);
     
     return () => {
       window.removeEventListener('mms_db_changed', handleDbChange);
       window.removeEventListener('change_tab', handleTabChange);
       window.removeEventListener('mms_supabase_status', handleSupabaseStatusChange);
       window.removeEventListener('mms_supabase_sync_toast', handleSupabaseSyncToast);
+      window.removeEventListener('mms_google_sheets_status', handleGoogleSheetsStatus);
+      window.removeEventListener('mms_google_sheets_sync', handleGoogleSheetsSync);
     };
   }, []);
 
@@ -119,6 +131,14 @@ export default function App() {
     if (e.detail) {
       showToast("🔄 Database Synchronized", `Table '${e.detail.replace('Updated ', '')}' updated from mobile.`, "sync");
     }
+  };
+
+  const handleGoogleSheetsStatus = () => setSupabaseStatus('Sheets');
+
+  const handleGoogleSheetsSync = (e) => {
+    if (!e.detail) return;
+    if (e.detail.success) showToast('Google Sheets synchronized', `${e.detail.table} was updated.`, 'sync');
+    else showToast('Google Sheets connection', e.detail.error || 'Sync failed.', 'warning');
   };
 
   const showToast = (title, desc, type = 'sync') => {
@@ -177,10 +197,9 @@ export default function App() {
     let overdue = 0;
     const todayStr = new Date().toISOString().slice(0, 10);
     
-    // Rent payments overdue
-    (db.rentPayments || []).forEach(rp => {
-      if (rp.status === 'Pending' && rp.dueBy && rp.dueBy < todayStr) overdue++;
-    });
+    // Rent payments overdue (dynamically calculated)
+    const { overdueList } = getDynamicRentStatus(db, todayStr);
+    overdue += overdueList.length;
     // Utility bills overdue
     (db.utilityBills || []).forEach(ub => {
       if (ub.status === 'Pending' && ub.dueDate && ub.dueDate < todayStr) overdue++;
@@ -260,13 +279,13 @@ export default function App() {
 
   const getPageTitle = () => {
     switch (activeTab) {
-      case 'dashboard': return 'Dashboard Overview';
-      case 'properties': return 'Property Portfolio';
-      case 'vehicles': return 'Vehicle Maintenance Logs';
+      case 'dashboard': return 'Dashboard';
+      case 'properties': return 'Properties';
+      case 'vehicles': return 'Vehicles';
       case 'loans': return 'Lending & Debt Hub';
       case 'utilities': return 'Utility Accounts & Bill Records';
       case 'maintenance': return 'Maintenance Requests & Aduan';
-      case 'reminders': return 'Deadline Calendar & Reminders';
+      case 'reminders': return 'Reminders';
       case 'financials': return 'Financial Ledger & Cash Flow';
       case 'documents': return 'Document File Tracker';
       case 'settings': return 'App Settings & Contact Book';
@@ -285,7 +304,7 @@ export default function App() {
       case 'reminders': return 'Look at upcoming deadlines on lists or mapped onto a monthly calendar.';
       case 'financials': return 'View overall expenses vs income, property P&Ls, and annual car costs.';
       case 'documents': return 'Organize and access contracts, cover notes, and receipts saved on Google Drive.';
-      case 'settings': return 'Configure preferences, load seed data, manage contacts, and export to CSV.';
+      case 'settings': return 'Configure preferences, connect live data, manage contacts, and export to CSV.';
       default: return '';
     }
   };
@@ -350,10 +369,12 @@ export default function App() {
       <!-- Sidebar Layout -->
       <aside class="sidebar ${sidebarOpen ? 'open' : ''}">
         <div class="sidebar-header">
-          <div style="background: var(--accent-color); width: 32px; height: 32px; border-radius: var(--radius-sm); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:1.1rem; color:white;">
-            A
+          <div class="sidebar-mark">
+            AH
           </div>
-          <span class="sidebar-logo">ASSET HUB</span>
+          <div class="sidebar-brand-copy">
+            <span class="sidebar-logo">Asset Hub</span>
+          </div>
         </div>
         
         <ul class="sidebar-menu">
@@ -392,8 +413,8 @@ export default function App() {
         </ul>
         
         <div class="sidebar-footer">
-          <div>Asset Hub v1.2</div>
-          <div style="margin-top:4px;">Zero Install local database</div>
+          <span class="status-dot ${supabaseStatus !== 'Offline' ? 'connected' : ''}"></span>
+          <span>${supabaseStatus !== 'Offline' ? 'Database connected' : 'Local database'}</span>
         </div>
       </aside>
 
@@ -403,12 +424,11 @@ export default function App() {
         <header class="header-bar">
           <div class="header-title">
             <h1>${getPageTitle()}</h1>
-            <p>${getPageSubtitle()}</p>
           </div>
           
           <div class="header-controls">
             ${getDb().settings?.supabaseUrl && html`
-              <div class="connection-badge ${supabaseStatus === 'Live' ? 'live' : 'offline'}" title="Supabase Connection">
+              <div class="connection-badge ${supabaseStatus !== 'Offline' ? 'live' : 'offline'}" title="Cloud database connection">
                 <span class="dot"></span>
                 <span>${supabaseStatus}</span>
               </div>
@@ -428,7 +448,7 @@ export default function App() {
         </header>
 
         <!-- Main tab page view contents -->
-        <section style="flex: 1;">
+        <section class="page-content">
           ${renderView()}
         </section>
       </main>

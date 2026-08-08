@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getItems, saveItem, deleteItem, getDb } from '../utils/storage.js';
+import { getItems, saveItem, deleteItem, getDb } from '../utils/storage.js?v=20260808-google-sheets-1';
 import { PlusIcon, EditIcon, TrashIcon, ArrowBackIcon, ExternalLinkIcon, ClockIcon } from './Icons.js';
 
 export default function Vehicles({ selectedVehicleId, setSelectedVehicleId, navigateToTab }) {
@@ -832,58 +832,37 @@ export default function Vehicles({ selectedVehicleId, setSelectedVehicleId, navi
   }
 
   return html`
-    <div>
+    <div class="reference-module">
+      <header class="reference-module-header">
+        <div><small>ASSET MANAGEMENT HUB</small><h2>Vehicles</h2><p>Mileage, service, insurance and road tax</p></div>
+        <button class="btn btn-primary" onClick=${() => handleOpenFormVehicle()}><${PlusIcon} /> Add Vehicle</button>
+      </header>
       <div class="filter-bar">
         <div class="search-input-wrapper">
           <input type="text" class="form-control" placeholder="Search vehicle registration plate or model..." value=${search} onInput=${e => setSearch(e.target.value)} />
         </div>
-        <button class="btn btn-primary" onClick=${() => handleOpenFormVehicle()}><${PlusIcon} /> Add Vehicle</button>
       </div>
 
-      <div class="card">
-        <div class="table-container">
+      <div class="reference-vehicle-cards">
           ${filteredVehicles.length === 0 ? html`
-            <p style="color:var(--text-muted); text-align:center; padding:30px;">No vehicles found.</p>
-          ` : html`
-            <table class="mms-table">
-              <thead>
-                <tr>
-                  <th>Vehicle Registration</th>
-                  <th>Make & Model</th>
-                  <th>Manufactured Year</th>
-                  <th>Owner</th>
-                  <th>Current Mileage</th>
-                  <th style="text-align: right;">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${filteredVehicles.map(veh => html`
-                  <tr key=${veh.id}>
-                    <td>
-                      <div style="font-weight: 800; font-size: 1.1rem; cursor: pointer; color: var(--accent-color);" onClick=${() => {
-                        setSelectedVehicleId(veh.id);
-                        setActiveVehicle(veh);
-                        setView('detail');
-                      }}>
-                        ${veh.registrationNumber}
-                      </div>
-                    </td>
-                    <td>${veh.makeModel}</td>
-                    <td>${veh.year}</td>
-                    <td>${veh.owner}</td>
-                    <td style="font-weight: 700;">${Number(veh.currentMileage).toLocaleString()} km</td>
-                    <td style="text-align: right;">
-                      <div style="display:inline-flex; gap:8px;">
-                        <button class="btn btn-secondary btn-sm" onClick=${() => handleOpenFormVehicle(veh)}><${EditIcon} /></button>
-                        <button class="btn btn-danger btn-sm" onClick=${() => handleDeleteVehicle(veh.id)}><${TrashIcon} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                `)}
-              </tbody>
-            </table>
-          `}
-        </div>
+            <p class="reference-empty">No vehicles found.</p>
+          ` : filteredVehicles.map(veh => {
+            const lastService = services.filter(item => item.vehicleId === veh.id).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || {};
+            const roadTax = roadTaxes.filter(item => item.vehicleId === veh.id).sort((a, b) => String(b.expiryDate).localeCompare(String(a.expiryDate)))[0] || {};
+            const current = Number(veh.currentMileage || 0);
+            const next = Number(lastService.nextServiceMileage || current || 1);
+            const progress = Math.min(100, current / Math.max(next, 1) * 100);
+            return html`
+              <article class="reference-vehicle-card" key=${veh.id}>
+                <header><b>◇</b><span class="reference-badge success">${veh.status || 'Active'}</span></header>
+                <button class="vehicle-card-main" onClick=${() => { setSelectedVehicleId(veh.id); setActiveVehicle(veh); setView('detail'); }}><h3>${veh.makeModel}</h3><p>${veh.registrationNumber}</p></button>
+                <label><span><strong>${current.toLocaleString()}</strong> km</span><small>${Math.max(0, next - current).toLocaleString()} km remaining</small></label>
+                <div class="vehicle-progress"><i style=${{ width: `${progress}%` }}></i></div>
+                <footer><span>Road tax</span><strong>${roadTax.expiryDate || 'Not set'}</strong></footer>
+                <div class="vehicle-card-actions"><button onClick=${() => handleOpenFormVehicle(veh)}><${EditIcon} /> Edit</button><button onClick=${() => handleDeleteVehicle(veh.id)}><${TrashIcon} /></button></div>
+              </article>
+            `;
+          })}
       </div>
     </div>
   `;

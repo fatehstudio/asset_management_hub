@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getDb, saveDb, saveItem, deleteItem, exportBackup, importBackup, resetDatabase, exportToCSV } from '../utils/storage.js';
+import { getDb, saveDb, saveItem, deleteItem, exportBackup, importBackup, resetDatabase, exportToCSV, syncFromGoogleSheets } from '../utils/storage.js?v=20260808-google-sheets-1';
 import { PlusIcon, TrashIcon, ArrowBackIcon } from './Icons.js';
 import { SUPABASE_SQL_SCHEMA } from '../utils/supabaseSchema.js';
 
@@ -12,6 +12,10 @@ export default function Settings() {
   const [viewContactForm, setViewContactForm] = useState(false);
   const [contactForm, setContactForm] = useState({ id: '', name: '', phone: '', email: '', role: 'Tenant' });
   const [importStatus, setImportStatus] = useState('');
+  const [googleSheetsUrl, setGoogleSheetsUrl] = useState('');
+  const [googleAppsScriptUrl, setGoogleAppsScriptUrl] = useState('');
+  const [googleStatus, setGoogleStatus] = useState('');
+  const [googleConnecting, setGoogleConnecting] = useState(false);
 
   // Supabase connection states
   const [supabaseUrl, setSupabaseUrl] = useState('');
@@ -37,7 +41,32 @@ export default function Settings() {
       setTheme(db.settings.theme || 'dark');
       setSupabaseUrl(db.settings.supabaseUrl || '');
       setSupabaseAnonKey(db.settings.supabaseAnonKey || '');
+      setGoogleSheetsUrl(db.settings.googleSheetsUrl || '');
+      setGoogleAppsScriptUrl(db.settings.googleAppsScriptUrl || '');
       setAppLockPin(db.settings.appLockPin || '');
+    }
+  };
+
+  const handleGoogleSheetsConnect = async (e) => {
+    e.preventDefault();
+    if (!googleSheetsUrl) {
+      setGoogleStatus('Please enter the Google Sheet URL.');
+      return;
+    }
+    setGoogleConnecting(true);
+    setGoogleStatus('Connecting and importing the latest rows...');
+    try {
+      const db = getDb();
+      db.settings = { ...(db.settings || {}), googleSheetsUrl, googleAppsScriptUrl };
+      saveDb(db);
+      await syncFromGoogleSheets(googleSheetsUrl, googleAppsScriptUrl);
+      setGoogleStatus(googleAppsScriptUrl
+        ? 'Connected. Automatic reading and write-back are active.'
+        : 'Connected for reading. Add the Apps Script Web App URL to enable write-back.');
+    } catch (error) {
+      setGoogleStatus(`Connection failed: ${error.message}`);
+    } finally {
+      setGoogleConnecting(false);
     }
   };
 
@@ -88,13 +117,6 @@ export default function Settings() {
     reader.readAsText(file);
   };
 
-  const handleReset = () => {
-    if (confirm('⚠️ WARNING: This will delete all your current logs and overwrite them with mock seeding data. Are you sure you want to proceed?')) {
-      resetDatabase();
-      alert('Database reset to defaults.');
-    }
-  };
-
   const handleSupabaseConnect = async (e) => {
     e.preventDefault();
     if (!supabaseUrl || !supabaseAnonKey) {
@@ -105,7 +127,7 @@ export default function Settings() {
     setConnectionStatus('⏳ Verifying connection to your Supabase tables...');
     
     try {
-      const { testSupabaseConnection, resetSupabaseInstance, syncAllFromSupabase, subscribeToRealtimeChanges } = await import('../utils/storage.js');
+      const { testSupabaseConnection, resetSupabaseInstance, syncAllFromSupabase, subscribeToRealtimeChanges } = await import('../utils/storage.js?v=20260808-google-sheets-1');
       // Test connection
       await testSupabaseConnection(supabaseUrl, supabaseAnonKey);
       
@@ -127,6 +149,13 @@ export default function Settings() {
       setConnectionStatus(`❌ Connection failed: ${err.message}. Ensure your URL, Anon Key, and database tables are set up correctly.`);
     } finally {
       setConnecting(false);
+    }
+  };
+
+  const handleClearRecords = () => {
+    if (confirm('WARNING: This will permanently clear all locally stored records. Your connection preferences will be kept. Continue?')) {
+      resetDatabase();
+      alert('Local records have been cleared.');
     }
   };
 
@@ -179,6 +208,28 @@ export default function Settings() {
               <input type="text" class="form-control" style="max-width: 150px;" value=${currency} onInput=${handleCurrencyChange} />
               <p style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">This symbol will be shown in all P&L records, loan metrics, and ledger views.</p>
             </div>
+          </div>
+
+          <!-- Supabase Database Sync -->
+          <div class="card">
+            <div class="card-title">Google Sheets Connection</div>
+            <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:16px;">
+              The real MMS spreadsheet is used as the dashboard source. The Apps Script Web App URL enables edits made here to be written back to Google Sheets.
+            </p>
+            <form onSubmit=${handleGoogleSheetsConnect}>
+              <div class="form-group">
+                <label>Google Sheet URL</label>
+                <input type="url" class="form-control" value=${googleSheetsUrl} onInput=${e => setGoogleSheetsUrl(e.target.value)} disabled=${googleConnecting} required />
+              </div>
+              <div class="form-group" style="margin-top:12px;">
+                <label>Apps Script Web App URL (for private read + write-back)</label>
+                <input type="url" class="form-control" placeholder="https://script.google.com/macros/s/.../exec" value=${googleAppsScriptUrl} onInput=${e => setGoogleAppsScriptUrl(e.target.value)} disabled=${googleConnecting} />
+              </div>
+              <button type="submit" class="btn btn-primary" style="margin-top:14px;" disabled=${googleConnecting}>
+                ${googleConnecting ? 'Connecting...' : 'Connect & Sync Google Sheets'}
+              </button>
+            </form>
+            ${googleStatus && html`<p style="margin-top:14px; font-weight:700; font-size:0.86rem; color:var(--text-primary);">${googleStatus}</p>`}
           </div>
 
           <!-- Supabase Database Sync -->
@@ -287,9 +338,9 @@ export default function Settings() {
           <div class="card" style="border-color: hsla(var(--color-danger) / 0.3);">
             <div class="card-title" style="color: hsl(var(--color-danger));">Danger Zone</div>
             <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:16px;">
-              Resetting will clear all your active changes and reload the default demonstration database.
+              Clear all locally stored records while keeping your application and database connection preferences.
             </p>
-            <button class="btn btn-danger" onClick=${handleReset}>Reset to Seeding Data</button>
+            <button class="btn btn-danger" onClick=${handleClearRecords}>Clear Local Records</button>
           </div>
 
         </div>
