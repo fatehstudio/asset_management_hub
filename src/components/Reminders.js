@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getDb, saveItem } from '../utils/storage.js';
+import { getDb, saveItem, getDynamicRentStatus } from '../utils/storage.js?v=20260808-google-sheets-1';
 import { ClockIcon, ArrowBackIcon, ArrowRightIcon } from './Icons.js';
 
 export default function Reminders() {
@@ -82,20 +82,19 @@ export default function Reminders() {
       };
     };
 
-    // 1. Rent Due
-    rentPayments.forEach(rp => {
-      if (rp.status === 'Pending' && rp.dueBy) {
-        const prop = properties.find(p => p.id === rp.propertyId);
-        list.push(mapReminder(
-          rp.dueBy, 
-          `Rental Payment: ${prop ? prop.name : 'Property'}`,
-          `Rent for ${rp.billingMonth}`,
-          rp.amount,
-          'Pending',
-          'properties',
-          'Rent'
-        ));
-      }
+    // 1. Rent Due (dynamically calculated)
+    const { overdueList: dynamicOverdue, pendingList: dynamicPending } = getDynamicRentStatus(db, todayStr);
+    [...dynamicOverdue, ...dynamicPending].forEach(rp => {
+      const prop = properties.find(p => p.id === rp.propertyId);
+      list.push(mapReminder(
+        rp.dueBy, 
+        `Rental Payment: ${prop ? prop.name : 'Property'}`,
+        `Rent for ${rp.billingMonth}`,
+        rp.amount,
+        'Pending',
+        'properties',
+        'Rent'
+      ));
     });
 
     // 2. Utility Bills
@@ -369,7 +368,10 @@ export default function Reminders() {
   const currency = getDb().settings?.currency || "RM";
 
   return html`
-    <div>
+    <div class="reference-module reference-reminders-page">
+      <header class="reference-module-header">
+        <div><small>ASSET MANAGEMENT HUB</small><h2>Reminders & calendar</h2><p>Priorities based on due dates</p></div>
+      </header>
       <div class="tab-header">
         <button class="tab-btn ${activeTab === 'list' ? 'active' : ''}" onClick=${() => setActiveTab('list')}>
           Grouped Deadlines List
@@ -381,40 +383,14 @@ export default function Reminders() {
 
       <!-- LIST VIEW -->
       ${activeTab === 'list' && html`
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; align-items: start;">
-          ${columns.map(col => {
-            const colItems = reminders.filter(rem => rem.group === col);
-            return html`
-              <div key=${col} class="card" style="padding: 16px; min-height: 400px; display:flex; flex-direction:column;">
-                <h3 style="font-size: 1rem; font-weight:800; border-bottom: 2px solid var(--border-color); padding-bottom: 12px; margin-bottom: 14px;">
-                  ${getGroupTitle(col)} (${colItems.length})
-                </h3>
-                <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
-                  ${colItems.length === 0 ? html`
-                    <p style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:30px 0;">No items</p>
-                  ` : colItems.map(rem => html`
-                    <div key=${rem.id} class="reminder-item ${rem.statusColor}" style="margin-bottom:0; cursor:pointer;" onClick=${() => window.dispatchEvent(new CustomEvent('change_tab', { detail: rem.path }))}>
-                      <div class="reminder-details">
-                        <div class="reminder-title">${rem.title}</div>
-                        <div class="reminder-subtitle">${rem.subtitle}</div>
-                        ${rem.amount > 0 && html`
-                          <div style="font-size:0.75rem; font-weight:700; color:var(--text-primary); margin-top:6px;">
-                            Value: ${currency} ${Number(rem.amount).toFixed(2)}
-                          </div>
-                        `}
-                      </div>
-                      <div style="text-align:right;">
-                        <span class="badge ${rem.statusColor === 'overdue' ? 'badge-danger' : rem.statusColor === 'due-soon' ? 'badge-warning' : rem.statusColor === 'completed' ? 'badge-success' : 'badge-info'}" style="font-size:0.55rem; padding: 2px 6px;">
-                          ${rem.typeName}
-                        </span>
-                        <div style="font-size:0.7rem; color:var(--text-muted); margin-top:6px;">${rem.date}</div>
-                      </div>
-                    </div>
-                  `)}
-                </div>
-              </div>
-            `;
-          })}
+        <div class="reference-reminder-list">
+          ${reminders.length === 0 ? html`<p class="reference-empty">No reminders found.</p>` : reminders.map(rem => html`
+            <article key=${rem.id} class=${rem.statusColor} onClick=${() => window.dispatchEvent(new CustomEvent('change_tab', { detail: rem.path }))}>
+              <time>${rem.date}</time>
+              <span><small>${rem.typeName}</small><h3>${rem.title}</h3><p>${rem.subtitle}${rem.amount > 0 ? ` · ${currency} ${Number(rem.amount).toLocaleString()}` : ''}</p></span>
+              <em class="reference-badge ${rem.statusColor}">${rem.statusColor === 'overdue' ? 'Overdue' : rem.statusColor === 'due-soon' ? 'Due Soon' : rem.statusColor === 'completed' ? 'Completed' : 'Upcoming'}</em>
+            </article>
+          `)}
         </div>
       `}
 

@@ -85,6 +85,7 @@ create table rental_agreements (
   "monthlyRent" numeric default 0,
   "depositAmount" numeric default 0,
   "dueDateDay" integer default 5,
+  "billingFrequency" text default 'Monthly',
   status text,
   "documentLink" text
 );

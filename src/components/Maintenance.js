@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getItems, saveItem, deleteItem, getDb } from '../utils/storage.js';
+import { getItems, saveItem, deleteItem, getDb } from '../utils/storage.js?v=20260808-google-sheets-1';
 import { PlusIcon, EditIcon, TrashIcon, ArrowBackIcon, ExternalLinkIcon } from './Icons.js';
 
 export default function Maintenance() {

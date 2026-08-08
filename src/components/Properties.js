@@ -1,5 +1,5 @@
 import { html, useState, useEffect } from '../utils/htm.js';
-import { getItems, saveItem, deleteItem, getDb } from '../utils/storage.js';
+import { getItems, saveItem, deleteItem, getDb, getDynamicRentStatus } from '../utils/storage.js?v=20260808-google-sheets-1';
 import { PlusIcon, EditIcon, TrashIcon, ArrowBackIcon, ExternalLinkIcon } from './Icons.js';
 
 export default function Properties({ selectedPropertyId, setSelectedPropertyId, navigateToTab }) {
@@ -430,7 +430,24 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     const propLoan = loans.find(l => l.propertyId === activeProperty.id);
     const propUtilities = utilities.filter(u => u.propertyId === activeProperty.id);
     const propMaint = maintenance.filter(m => m.propertyId === activeProperty.id);
-    const propPayments = rentPayments.filter(rp => rp.propertyId === activeProperty.id);
+    
+    // Get actual raw payments from database
+    const rawPayments = rentPayments.filter(rp => rp.propertyId === activeProperty.id);
+    
+    // Get dynamic unpaid/overdue payments calculated from tenancy agreement
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { overdueList, pendingList } = getDynamicRentStatus(getDb(), todayStr);
+    const dynamicUnpaid = [...overdueList, ...pendingList].filter(rp => rp.propertyId === activeProperty.id);
+    
+    // Merge them: paid ones from db, plus dynamic unpaid ones
+    const propPayments = [
+      ...rawPayments.filter(rp => rp.status === 'Paid'),
+      ...dynamicUnpaid
+    ].sort((a, b) => (b.dueBy || b.date || '') > (a.dueBy || a.date || '') ? 1 : -1);
+
+    // Find the current active billing (first unpaid Pending, or the most recent paid)
+    const currentBilling = propPayments.find(rp => rp.status === 'Pending') || 
+                           [...propPayments].sort((a, b) => (b.dueBy || b.date || '') > (a.dueBy || a.date || '') ? 1 : -1)[0];
 
     return html`
       <div>
@@ -462,6 +479,21 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
           <div class="detail-cell">
             <div class="detail-cell-label">Deposit Held</div>
             <div class="detail-cell-value">${currency} ${Number(activeProperty.depositCollected).toFixed(2)}</div>
+          </div>
+          <div class="detail-cell">
+            <div class="detail-cell-label">Current Billing Month</div>
+            <div class="detail-cell-value">${currentBilling ? currentBilling.billingMonth : 'No Bills Logged'}</div>
+          </div>
+          <div class="detail-cell" style="${currentBilling && currentBilling.status === 'Pending' && currentBilling.dueBy < todayStr ? 'border-left: 3px solid hsl(var(--color-danger));' : ''}">
+            <div class="detail-cell-label">Billing Due Date</div>
+            <div class="detail-cell-value" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span>${currentBilling ? (currentBilling.dueBy || '-') : '-'}</span>
+              ${currentBilling && html`
+                <span class="badge ${currentBilling.status === 'Paid' ? 'badge-success' : (currentBilling.dueBy && currentBilling.dueBy < todayStr ? 'badge-danger' : 'badge-warning')}" style="font-size: 0.65rem; padding: 2px 6px;">
+                  ${currentBilling.status === 'Paid' ? 'Paid' : (currentBilling.dueBy && currentBilling.dueBy < todayStr ? 'Overdue' : 'Pending')}
+                </span>
+              `}
+            </div>
           </div>
         </div>
 
@@ -665,7 +697,11 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
   }
 
   return html`
-    <div>
+    <div class="reference-module">
+      <header class="reference-module-header">
+        <div><small>ASSET MANAGEMENT HUB</small><h2>Property portfolio</h2><p>${properties.filter(item => item.status === 'Rented').length} of ${properties.length} units are rented</p></div>
+        <button class="btn btn-primary" onClick=${() => handleOpenFormProperty()}><${PlusIcon} /> Add Property</button>
+      </header>
       <!-- Filter Bar -->
       <div class="filter-bar">
         <div class="search-input-wrapper">
@@ -677,68 +713,103 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
             <option value="Own">Own Properties</option>
             <option value="Client">Managed (Client)</option>
           </select>
-          <button class="btn btn-primary" onClick=${() => handleOpenFormProperty()}><${PlusIcon} /> Add Property</button>
         </div>
       </div>
 
-      <!-- Properties list table -->
-      <div class="card">
-        <div class="table-container">
+      <!-- Property portfolio cards -->
+      <div class="reference-asset-cards">
           ${filteredProperties.length === 0 ? html`
-            <p style="color: var(--text-muted); text-align: center; padding: 30px;">No properties match your filters.</p>
-          ` : html`
-            <table class="mms-table">
-              <thead>
-                <tr>
-                  <th>Property Name</th>
-                  <th>Type</th>
-                  <th>Owner</th>
-                  <th>Tenant</th>
-                  <th>Rent</th>
-                  <th>Status</th>
-                  <th style="text-align: right;">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${filteredProperties.map(prop => {
-                  const activeTenant = tenants.find(t => t.propertyId === prop.id && t.status === 'Active');
-                  return html`
-                    <tr key=${prop.id}>
-                      <td>
-                        <div style="font-weight: 700; cursor: pointer; color: var(--accent-color);" onClick=${() => {
-                          setSelectedPropertyId(prop.id);
-                          setActiveProperty(prop);
-                          setView('detail');
-                        }}>
-                          ${prop.name}
-                        </div>
-                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                          ${prop.address}
-                        </div>
-                      </td>
-                      <td>${prop.type}</td>
-                      <td>${getOwnerName(prop.ownerId)}</td>
-                      <td style="color: ${activeTenant ? 'var(--text-primary)' : 'var(--text-muted)'}">
-                        ${activeTenant ? activeTenant.name : 'Vacant'}
-                      </td>
-                      <td style="font-weight: 700;">${currency} ${Number(prop.monthlyRent).toFixed(2)}</td>
-                      <td>
-                        <span class="badge ${prop.status === 'Rented' ? 'badge-success' : prop.status === 'Vacant' ? 'badge-warning' : 'badge-danger'}">
-                          ${prop.status}
-                        </span>
-                      </td>
-                      <td style="text-align: right;">
-                        <div style="display: inline-flex; gap: 8px;">
-                          <button class="btn btn-secondary btn-sm" onClick=${() => handleOpenFormProperty(prop)}><${EditIcon} /></button>
-                          <button class="btn btn-danger btn-sm" onClick=${() => handleDeleteProperty(prop.id)}><${TrashIcon} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  `;
-                })}
-              </tbody>
-            </table>
-          `}
+            <p class="reference-empty">No properties match your filters.</p>
+          ` : filteredProperties.map(prop => html`
+            <article class="reference-property-card" key=${prop.id}>
+              <button class="property-card-main" onClick=${() => { setSelectedPropertyId(prop.id); setActiveProperty(prop); setView('detail'); }}>
+                <div class="property-visual">${String(prop.name || 'P').charAt(0).toUpperCase()}</div>
+                <div class="property-card-body">
+                  <span class="reference-badge ${prop.status === 'Rented' ? 'success' : prop.status === 'Vacant' ? 'warning' : 'overdue'}">${prop.status}</span>
+                  <h3>${prop.name}</h3><p>${prop.address}</p>
+                  <footer><strong>${currency} ${Number(prop.monthlyRent || 0).toLocaleString()}</strong><small>/ month</small><em>View details →</em></footer>
+                </div>
+              </button>
+              <div class="property-card-actions"><button onClick=${() => handleOpenFormProperty(prop)}><${EditIcon} /></button><button onClick=${() => handleDeleteProperty(prop.id)}><${TrashIcon} /></button></div>
+            </article>
+          `)}
+      </div>
+
+      <!-- Latest Rent Payments Section -->
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-title">Latest Rent Payments (Status Kutipan Sewa Terkini)</div>
+        <div class="table-container">
+          ${(() => {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const { overdueList, pendingList } = getDynamicRentStatus(getDb(), todayStr);
+            
+            const allPaymentsMerged = [
+              ...rentPayments.filter(rp => rp.status === 'Paid'),
+              ...overdueList,
+              ...pendingList
+            ];
+            
+            const sortedPayments = allPaymentsMerged
+              .sort((a, b) => (b.dueBy || b.date || '') > (a.dueBy || a.date || '') ? 1 : -1)
+              .slice(0, 10); // Display latest 10 updates
+            
+            if (sortedPayments.length === 0) {
+              return html`<p style="color: var(--text-muted); text-align: center; padding: 20px;">No rent payment records logged yet.</p>`;
+            }
+            
+            return html`
+              <table class="mms-table">
+                <thead>
+                  <tr>
+                    <th>Property Name</th>
+                    <th>Billing Month</th>
+                    <th>Due Date</th>
+                    <th>Date Paid</th>
+                    <th>Status</th>
+                    <th style="text-align: right;">Amount</th>
+                    <th style="text-align: right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sortedPayments.map(rp => {
+                    const prop = properties.find(p => p.id === rp.propertyId);
+                    const isOverdue = rp.status === 'Pending' && rp.dueBy && rp.dueBy < todayStr;
+                    
+                    return html`
+                      <tr key=${rp.id}>
+                        <td>
+                          <div style="font-weight: 700; color: var(--accent-color); cursor: pointer;" onClick=${() => {
+                            if (prop) {
+                              setSelectedPropertyId(prop.id);
+                              setActiveProperty(prop);
+                              setView('detail');
+                            }
+                          }}>
+                            ${prop ? prop.name : 'Unknown Property'}
+                          </div>
+                        </td>
+                        <td>${rp.billingMonth}</td>
+                        <td>${rp.dueBy || '-'}</td>
+                        <td>${rp.status === 'Paid' ? rp.date : '-'}</td>
+                        <td>
+                          <span class="badge ${rp.status === 'Paid' ? 'badge-success' : isOverdue ? 'badge-danger' : 'badge-warning'}">
+                            ${rp.status === 'Paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Pending'}
+                          </span>
+                        </td>
+                        <td style="text-align: right; font-weight: 700;">${currency} ${Number(rp.amount).toFixed(2)}</td>
+                        <td style="text-align: right;">
+                          <button class="btn btn-secondary btn-sm" style="padding: 2px 6px;" onClick=${() => {
+                            setPaymentForm({ ...rp });
+                            setView('form-payment');
+                          }}><${EditIcon} /></button>
+                        </td>
+                      </tr>
+                    `;
+                  })}
+                </tbody>
+              </table>
+            `;
+          })()}
         </div>
       </div>
     </div>

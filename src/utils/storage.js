@@ -1,10 +1,25 @@
-import { INITIAL_MOCK_DATA } from './mockData.js';
+import { createEmptyDatabase, isLegacySampleDatabase, DEFAULT_GOOGLE_SHEETS_URL } from './emptyDatabase.js';
 
 const STORAGE_KEY = 'mms_database';
 
 export function initializeDatabase() {
-  if (!localStorage.getItem(STORAGE_KEY)) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_MOCK_DATA));
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(createEmptyDatabase()));
+    return;
+  }
+
+  try {
+    const database = JSON.parse(stored);
+    if (isLegacySampleDatabase(database)) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(createEmptyDatabase(database.settings)));
+    } else if (!database.settings?.googleSheetsUrl) {
+      database.settings = { ...(database.settings || {}), googleSheetsUrl: DEFAULT_GOOGLE_SHEETS_URL, dataMode: 'live' };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(database));
+    }
+  } catch (error) {
+    console.error('Failed to parse the local database. Starting with an empty database.', error);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(createEmptyDatabase()));
   }
 }
 
@@ -13,8 +28,10 @@ export function getDb() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY));
   } catch (e) {
-    console.error("Failed to parse database from localStorage, resetting to mock data.", e);
-    return INITIAL_MOCK_DATA;
+    console.error('Failed to parse the local database. Starting with an empty database.', e);
+    const emptyDatabase = createEmptyDatabase();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(emptyDatabase));
+    return emptyDatabase;
   }
 }
 
@@ -237,6 +254,8 @@ export function saveItem(table, item) {
     });
   }
 
+  syncItemToGoogleSheets('save', table, item);
+
   return item;
 }
 
@@ -254,9 +273,31 @@ export function deleteItem(table, id) {
         if (error) console.error(`Failed to sync delete to Supabase [${sbTable}] id=${id}:`, error);
       });
     }
+    syncItemToGoogleSheets('delete', table, null, id);
     return true;
   }
   return false;
+}
+
+async function syncItemToGoogleSheets(action, table, item, id) {
+  if (table === 'settings') return;
+  const webAppUrl = getDb().settings?.googleAppsScriptUrl;
+  if (!webAppUrl) return;
+
+  try {
+    const response = await fetch(webAppUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, table: getSheetName(table), item, id })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error || 'Google Sheets rejected the update.');
+    window.dispatchEvent(new CustomEvent('mms_google_sheets_sync', { detail: { success: true, table: getSheetName(table) } }));
+  } catch (error) {
+    console.error(`Failed to sync ${table} to Google Sheets:`, error);
+    window.dispatchEvent(new CustomEvent('mms_google_sheets_sync', { detail: { success: false, table: getSheetName(table), error: error.message } }));
+  }
 }
 
 // Backup & Restore
@@ -287,7 +328,8 @@ export function importBackup(jsonString) {
 }
 
 export function resetDatabase() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_MOCK_DATA));
+  const currentSettings = getDb().settings || {};
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(createEmptyDatabase(currentSettings)));
   window.dispatchEvent(new Event('mms_db_changed'));
 }
 
@@ -699,7 +741,7 @@ function mapKeys(obj, table) {
   return mapped;
 }
 
-export async function syncFromGoogleSheets(sheetUrl) {
+export async function syncFromGoogleSheets(sheetUrl, webAppUrl = '') {
   const matches = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
   if (!matches) {
     throw new Error("Invalid Google Sheets URL. Make sure it contains '/d/SPREADSHEET_ID'");
@@ -707,14 +749,15 @@ export async function syncFromGoogleSheets(sheetUrl) {
   const spreadsheetId = matches[1];
 
   const oldDb = getDb();
-  const existingSheetsUrl = oldDb.settings?.googleSheetsUrl || sheetUrl;
+  const existingSheetsUrl = sheetUrl || oldDb.settings?.googleSheetsUrl;
+  const existingWebAppUrl = webAppUrl || oldDb.settings?.googleAppsScriptUrl || '';
 
   const tables = [
     "Owners", "Properties", "Tenants", "RentalAgreements", "RentPayments", 
     "PropertyLoans", "Utilities", "UtilityBills", "Maintenance", "Contractors", 
     "Borrowers", "PersonalLoans", "LoanPayments", "Vehicles", "VehicleLoans", 
     "ServiceTypes", "VehicleServices", "VehicleInspections", "VehicleRoadTax", 
-    "VehicleInsurance", "FinancialTransactions", "Documents", "Contacts", "Settings"
+    "VehicleInsurance", "FinancialTransactions", "Documents", "Reminders", "ActivityLog", "Contacts", "Settings"
   ];
 
   const db = {
@@ -722,21 +765,38 @@ export async function syncFromGoogleSheets(sheetUrl) {
       currency: "RM",
       theme: "dark",
       googleSheetsUrl: existingSheetsUrl,
+      googleAppsScriptUrl: existingWebAppUrl,
       serviceTypes: [],
       utilityTypes: [],
       documentTypes: []
     }
   };
 
+  let snapshotSheets = null;
+  if (existingWebAppUrl) {
+    const separator = existingWebAppUrl.includes('?') ? '&' : '?';
+    const snapshotResponse = await fetch(`${existingWebAppUrl}${separator}action=snapshot&t=${Date.now()}`);
+    if (!snapshotResponse.ok) throw new Error(`Google Apps Script returned HTTP ${snapshotResponse.status}`);
+    const snapshot = await snapshotResponse.json();
+    if (!snapshot.success || !snapshot.sheets) throw new Error(snapshot.error || 'The Google Apps Script snapshot endpoint is unavailable. Redeploy the latest script.');
+    snapshotSheets = snapshot.sheets;
+  }
+
   for (const table of tables) {
-    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(table)}&t=${Date.now()}`;
-    const response = await fetch(csvUrl);
-    if (!response.ok) {
-      console.warn(`Failed to fetch sheet "${table}". Skipping.`);
-      continue;
+    let rows = [];
+    if (snapshotSheets) {
+      const sheet = snapshotSheets[table];
+      if (!sheet) continue;
+      rows = (sheet.rows || []).map(values => Object.fromEntries((sheet.headers || []).map((header, index) => [header, values[index] ?? ''])));
+    } else {
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(table)}&t=${Date.now()}`;
+      const response = await fetch(csvUrl);
+      if (!response.ok) {
+        console.warn(`Failed to fetch sheet "${table}". Skipping.`);
+        continue;
+      }
+      rows = parseCSV(await response.text());
     }
-    const csvText = await response.text();
-    const rows = parseCSV(csvText);
     const mappedRows = rows.map(row => mapKeys(row, table));
 
     if (table === "Settings") {
@@ -762,7 +822,11 @@ export async function syncFromGoogleSheets(sheetUrl) {
     db.settings.documentTypes = ["Rental Agreement", "Tenant Identity (IC/Passport)", "Utility Bill", "Payment Receipt", "Loan Agreement", "Insurance Policy", "Road Tax Disc", "Service Receipt", "Inspection Certificate"];
   }
 
+  Object.keys(createEmptyDatabase(db.settings)).forEach(key => {
+    if (key !== 'settings' && !db[key]) db[key] = [];
+  });
   saveDb(db);
+  window.dispatchEvent(new CustomEvent('mms_google_sheets_status', { detail: 'Sheets' }));
   return db;
 }
 
@@ -976,4 +1040,103 @@ export function subscribeToRealtimeChanges() {
     });
 }
 
-
+// Dynamically compute unpaid/overdue rent payments based on tenancy agreements
+export function getDynamicRentStatus(db, today) {
+  const todayStr = today || new Date().toISOString().slice(0, 10);
+  const properties = db.properties || [];
+  const tenants = db.tenants || [];
+  const rentalAgreements = db.rentalAgreements || [];
+  const rentPayments = db.rentPayments || [];
+  
+  const overdueList = [];
+  const pendingList = [];
+  
+  // Find active rental agreements
+  rentalAgreements.forEach(ra => {
+    if (ra.status !== 'Active') return;
+    
+    const prop = properties.find(p => p.id === ra.propertyId);
+    if (!prop) return;
+    
+    const tenant = tenants.find(t => t.id === ra.tenantId);
+    if (!tenant) return;
+    
+    // Parse start date of agreement
+    const start = new Date(ra.startDate);
+    const end = ra.endDate ? new Date(ra.endDate) : new Date(new Date().getFullYear() + 2, new Date().getMonth(), 1);
+    const curr = new Date();
+    
+    // We check months between start date and today
+    let checkDate = new Date(start.getFullYear(), start.getMonth(), 1);
+    const limitDate = new Date(curr.getFullYear(), curr.getMonth(), 1);
+    
+    // Step size based on frequency
+    let stepMonths = 1;
+    const frequency = ra.billingFrequency || 'Monthly';
+    if (frequency === 'Quarterly') stepMonths = 3;
+    else if (frequency === '6-Monthly') stepMonths = 6;
+    else if (frequency === 'Annually') stepMonths = 12;
+    
+    while (checkDate <= limitDate) {
+      // Don't check beyond the agreement's end date
+      if (checkDate > end) break;
+      
+      let billingMonthStr = "";
+      if (frequency === 'Monthly') {
+        billingMonthStr = checkDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+      } else {
+        const monthStartStr = checkDate.toLocaleString('default', { month: 'short', year: 'numeric' });
+        const nextPeriod = new Date(checkDate.getFullYear(), checkDate.getMonth() + stepMonths - 1, 1);
+        const monthEndStr = nextPeriod.toLocaleString('default', { month: 'short', year: 'numeric' });
+        billingMonthStr = `${monthStartStr} - ${monthEndStr}`;
+      }
+      
+      // Check if there is a paid record for this property and month
+      const isPaid = rentPayments.some(rp => 
+        rp.propertyId === ra.propertyId && 
+        rp.billingMonth === billingMonthStr && 
+        rp.status === 'Paid'
+      );
+      
+      if (!isPaid) {
+        // Construct the due date for this specific month
+        const dueDay = Number(ra.dueDateDay) || 5;
+        const dueYear = checkDate.getFullYear();
+        const dueMonth = checkDate.getMonth();
+        // Handle month end days (e.g. 31st of Feb doesn't exist)
+        const actualDueDay = Math.min(dueDay, new Date(dueYear, dueMonth + 1, 0).getDate());
+        const dueByStr = `${dueYear}-${String(dueMonth + 1).padStart(2, '0')}-${String(actualDueDay).padStart(2, '0')}`;
+        
+        // Check if a pending record already exists in database
+        const existingRecord = rentPayments.find(rp => 
+          rp.propertyId === ra.propertyId && 
+          rp.billingMonth === billingMonthStr
+        );
+        
+        const amount = existingRecord ? existingRecord.amount : (ra.monthlyRent || prop.monthlyRent || 0);
+        const recordId = existingRecord ? existingRecord.id : `dynamic-rent-${ra.propertyId}-${dueByStr}`;
+        
+        const rentObj = {
+          id: recordId,
+          propertyId: ra.propertyId,
+          billingMonth: billingMonthStr,
+          dueBy: existingRecord ? (existingRecord.dueBy || dueByStr) : dueByStr,
+          amount: amount,
+          status: 'Pending',
+          isAutoGenerated: !existingRecord // flag showing it is auto-detected as unpaid
+        };
+        
+        if (rentObj.dueBy < todayStr) {
+          overdueList.push(rentObj);
+        } else {
+          pendingList.push(rentObj);
+        }
+      }
+      
+      // Move to next period
+      checkDate.setMonth(checkDate.getMonth() + stepMonths);
+    }
+  });
+  
+  return { overdueList, pendingList };
+}
