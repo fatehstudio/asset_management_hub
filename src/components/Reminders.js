@@ -1,5 +1,6 @@
 import { html, useState, useEffect } from '../utils/htm.js';
 import { getDb, saveItem, getDynamicRentStatus } from '../utils/storage.js?v=20260808-google-sheets-1';
+import { REMINDER_START_DATE, isReminderDateIncluded } from '../utils/reminderPolicy.js';
 import { ClockIcon, ArrowBackIcon, ArrowRightIcon } from './Icons.js';
 
 export default function Reminders() {
@@ -30,6 +31,7 @@ export default function Reminders() {
     const inspections = db.vehicleInspections || [];
     const roadTax = db.vehicleRoadTax || [];
     const insurance = db.vehicleInsurance || [];
+    const rentalAgreements = db.rentalAgreements || [];
 
     const list = [];
     const today = new Date();
@@ -44,6 +46,7 @@ export default function Reminders() {
 
     // Helper to determine status and category
     const mapReminder = (date, title, subtitle, amount, status, path, typeName) => {
+      if (!isReminderDateIncluded(date)) return null;
       const daysDiff = getDaysDiff(date);
       let group = 'upcoming';
       let statusColor = 'upcoming';
@@ -82,11 +85,16 @@ export default function Reminders() {
       };
     };
 
+    const addReminder = (...args) => {
+      const reminder = mapReminder(...args);
+      if (reminder) list.push(reminder);
+    };
+
     // 1. Rent Due (dynamically calculated)
     const { overdueList: dynamicOverdue, pendingList: dynamicPending } = getDynamicRentStatus(db, todayStr);
     [...dynamicOverdue, ...dynamicPending].forEach(rp => {
       const prop = properties.find(p => p.id === rp.propertyId);
-      list.push(mapReminder(
+      addReminder(
         rp.dueBy, 
         `Rental Payment: ${prop ? prop.name : 'Property'}`,
         `Rent for ${rp.billingMonth}`,
@@ -94,7 +102,23 @@ export default function Reminders() {
         'Pending',
         'properties',
         'Rent'
-      ));
+      );
+    });
+
+    // Rental agreement expiry
+    rentalAgreements.forEach(agreement => {
+      if (agreement.status !== 'Active' || !agreement.endDate) return;
+      const property = properties.find(p => p.id === agreement.propertyId);
+      const tenant = tenants.find(t => t.id === agreement.tenantId);
+      addReminder(
+        agreement.endDate,
+        `Rental Agreement Expiry: ${property?.name || 'Property'}`,
+        tenant?.name ? `Tenant: ${tenant.name}` : 'Review or renew rental agreement',
+        0,
+        'Pending',
+        'properties',
+        'Agreement'
+      );
     });
 
     // 2. Utility Bills
@@ -102,7 +126,7 @@ export default function Reminders() {
       if (ub.status === 'Pending' && ub.dueDate) {
         const ut = utilities.find(u => u.id === ub.utilityId);
         const prop = properties.find(p => p.id === ut?.propertyId);
-        list.push(mapReminder(
+        addReminder(
           ub.dueDate,
           `${ut?.type || 'Utility'} Bill: ${prop ? prop.name : 'Property'}`,
           `Bill for ${ub.billingMonth} (Acc: ${ut?.accountNumber || '-'})`,
@@ -110,7 +134,7 @@ export default function Reminders() {
           'Pending',
           'utilities',
           'Utility'
-        ));
+        );
       }
     });
 
@@ -126,7 +150,7 @@ export default function Reminders() {
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
         };
 
-        list.push(mapReminder(
+        addReminder(
           buildDate(0),
           `Property Loan: ${l.bank}`,
           `Instalment due for ${p ? p.name : 'Property'}`,
@@ -134,7 +158,7 @@ export default function Reminders() {
           'Pending',
           'loans',
           'Loan'
-        ));
+        );
       }
     });
 
@@ -149,7 +173,7 @@ export default function Reminders() {
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
         };
 
-        list.push(mapReminder(
+        addReminder(
           buildDate(0),
           `Vehicle Loan: ${l.bank}`,
           `Instalment for ${v ? v.registrationNumber : 'Car'}`,
@@ -157,7 +181,7 @@ export default function Reminders() {
           'Pending',
           'loans',
           'Loan'
-        ));
+        );
       }
     });
 
@@ -172,7 +196,7 @@ export default function Reminders() {
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
         };
 
-        list.push(mapReminder(
+        addReminder(
           buildDate(0),
           `Repayment from: ${borrower}`,
           `Monthly payment expected`,
@@ -180,7 +204,7 @@ export default function Reminders() {
           'Pending',
           'loans',
           'Lending'
-        ));
+        );
       }
     });
 
@@ -189,7 +213,7 @@ export default function Reminders() {
       // Road Tax
       const vrt = roadTax.find(r => r.vehicleId === v.id);
       if (vrt && vrt.expiryDate) {
-        list.push(mapReminder(
+        addReminder(
           vrt.expiryDate,
           `Road Tax Expiry: ${v.registrationNumber}`,
           `${v.makeModel}`,
@@ -197,13 +221,13 @@ export default function Reminders() {
           'Pending',
           'vehicles',
           'Roadtax'
-        ));
+        );
       }
 
       // Insurance
       const vins = insurance.find(i => i.vehicleId === v.id);
       if (vins && vins.expiryDate) {
-        list.push(mapReminder(
+        addReminder(
           vins.expiryDate,
           `Insurance Expiry: ${v.registrationNumber}`,
           `${vins.insurer} Policy: ${vins.policyNumber}`,
@@ -211,13 +235,13 @@ export default function Reminders() {
           'Pending',
           'vehicles',
           'Insurance'
-        ));
+        );
       }
 
       // Inspection
       const vi = inspections.find(i => i.vehicleId === v.id);
       if (vi && vi.nextDueDate) {
-        list.push(mapReminder(
+        addReminder(
           vi.nextDueDate,
           `Inspection Due: ${v.registrationNumber}`,
           `Routine safety inspection`,
@@ -225,14 +249,14 @@ export default function Reminders() {
           'Pending',
           'vehicles',
           'Inspection'
-        ));
+        );
       }
 
       // Service Due
       const lastSvc = serviceHistory.filter(s => s.vehicleId === v.id).sort((a,b) => new Date(b.date) - new Date(a.date))[0];
       if (lastSvc) {
         if (lastSvc.nextServiceDate) {
-          list.push(mapReminder(
+          addReminder(
             lastSvc.nextServiceDate,
             `Car Service Date: ${v.registrationNumber}`,
             `Next Service at ${lastSvc.nextServiceMileage?.toLocaleString() || '-'} km (${lastSvc.serviceType})`,
@@ -240,12 +264,12 @@ export default function Reminders() {
             'Pending',
             'vehicles',
             'Service'
-          ));
+          );
         }
 
         // Mileage check
         const milDiff = lastSvc.nextServiceMileage - v.currentMileage;
-        if (milDiff <= 500 && milDiff > 0) {
+        if (milDiff <= 500 && milDiff > 0 && todayStr >= REMINDER_START_DATE) {
           list.push({
             id: `service-mileage-${v.id}`,
             date: todayStr,
@@ -370,7 +394,7 @@ export default function Reminders() {
   return html`
     <div class="reference-module reference-reminders-page">
       <header class="reference-module-header">
-        <div><small>ASSET MANAGEMENT HUB</small><h2>Reminders & calendar</h2><p>Priorities based on due dates</p></div>
+        <div><small>ASSET MANAGEMENT HUB</small><h2>Reminders & calendar</h2><p>Showing due dates from 1 August 2026 onward</p></div>
       </header>
       <div class="tab-header">
         <button class="tab-btn ${activeTab === 'list' ? 'active' : ''}" onClick=${() => setActiveTab('list')}>
