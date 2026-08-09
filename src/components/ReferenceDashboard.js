@@ -1,5 +1,6 @@
 import { html, useEffect, useState } from '../utils/htm.js';
 import { getDb, getDynamicRentStatus } from '../utils/storage.js?v=20260808-google-sheets-1';
+import { isReminderDateIncluded } from '../utils/reminderPolicy.js';
 
 export default function ReferenceDashboard({ navigateToTab }) {
   const [snapshot, setSnapshot] = useState(null);
@@ -18,12 +19,17 @@ export default function ReferenceDashboard({ navigateToTab }) {
       const { overdueList, pendingList } = getDynamicRentStatus(db, today);
       const reminders = [];
       const add = (date, title, subtitle, path = 'reminders') => {
-        if (!date || date > nextWeekStr) return;
+        if (!isReminderDateIncluded(date) || date > nextWeekStr) return;
         reminders.push({ date, title, subtitle, path, type: date < today ? 'overdue' : 'due-soon' });
       };
       [...overdueList, ...pendingList].forEach(item => {
         const property = properties.find(row => row.id === item.propertyId);
         add(item.dueBy, `Rent Due: ${property?.name || 'Property'}`, `${item.billingMonth} · ${currency} ${Number(item.amount || 0).toLocaleString()}`, 'properties');
+      });
+      (db.rentalAgreements || []).filter(item => item.status === 'Active').forEach(item => {
+        const property = properties.find(row => row.id === item.propertyId);
+        const tenant = (db.tenants || []).find(row => row.id === item.tenantId);
+        add(item.endDate, `Rental Agreement Expiry: ${property?.name || 'Property'}`, tenant?.name ? `Tenant: ${tenant.name}` : 'Review or renew agreement', 'properties');
       });
       (db.utilityBills || []).filter(item => item.status === 'Pending').forEach(item => {
         const utility = (db.utilities || []).find(row => row.id === item.utilityId);

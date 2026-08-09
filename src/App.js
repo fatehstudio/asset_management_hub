@@ -1,5 +1,6 @@
 import { html, useState, useEffect } from './utils/htm.js';
 import { getDb, getSupabase, subscribeToRealtimeChanges, syncAllFromSupabase, syncFromGoogleSheets, getDynamicRentStatus } from './utils/storage.js?v=20260808-google-sheets-1';
+import { isReminderDateIncluded } from './utils/reminderPolicy.js';
 import { 
   DashboardIcon, PropertyIcon, VehicleIcon, LoanIcon, 
   UtilityIcon, MaintenanceIcon, ReminderIcon, FinancialIcon, 
@@ -61,18 +62,21 @@ export default function App() {
       const todayStr = new Date().toISOString().slice(0, 10);
       
       const { overdueList } = getDynamicRentStatus(freshDb, todayStr);
-      overdue += overdueList.length;
+      overdue += overdueList.filter(item => isReminderDateIncluded(item.dueBy)).length;
       (freshDb.utilityBills || []).forEach(ub => {
-        if (ub.status === 'Pending' && ub.dueDate && ub.dueDate < todayStr) overdue++;
+        if (ub.status === 'Pending' && isReminderDateIncluded(ub.dueDate) && ub.dueDate < todayStr) overdue++;
       });
       (freshDb.vehicleInspections || []).forEach(vi => {
-        if (vi.nextDueDate && vi.nextDueDate < todayStr) overdue++;
+        if (isReminderDateIncluded(vi.nextDueDate) && vi.nextDueDate < todayStr) overdue++;
       });
       (freshDb.vehicleRoadTax || []).forEach(vrt => {
-        if (vrt.expiryDate && vrt.expiryDate < todayStr) overdue++;
+        if (isReminderDateIncluded(vrt.expiryDate) && vrt.expiryDate < todayStr) overdue++;
       });
       (freshDb.vehicleInsurance || []).forEach(vins => {
-        if (vins.expiryDate && vins.expiryDate < todayStr) overdue++;
+        if (isReminderDateIncluded(vins.expiryDate) && vins.expiryDate < todayStr) overdue++;
+      });
+      (freshDb.rentalAgreements || []).forEach(agreement => {
+        if (agreement.status === 'Active' && isReminderDateIncluded(agreement.endDate) && agreement.endDate < todayStr) overdue++;
       });
       
       if (overdue > 0) {
@@ -199,22 +203,25 @@ export default function App() {
     
     // Rent payments overdue (dynamically calculated)
     const { overdueList } = getDynamicRentStatus(db, todayStr);
-    overdue += overdueList.length;
+    overdue += overdueList.filter(item => isReminderDateIncluded(item.dueBy)).length;
     // Utility bills overdue
     (db.utilityBills || []).forEach(ub => {
-      if (ub.status === 'Pending' && ub.dueDate && ub.dueDate < todayStr) overdue++;
+      if (ub.status === 'Pending' && isReminderDateIncluded(ub.dueDate) && ub.dueDate < todayStr) overdue++;
     });
     // Vehicle inspections overdue
     (db.vehicleInspections || []).forEach(vi => {
-      if (vi.nextDueDate && vi.nextDueDate < todayStr) overdue++;
+      if (isReminderDateIncluded(vi.nextDueDate) && vi.nextDueDate < todayStr) overdue++;
     });
     // Vehicle road tax expired
     (db.vehicleRoadTax || []).forEach(vrt => {
-      if (vrt.expiryDate && vrt.expiryDate < todayStr) overdue++;
+      if (isReminderDateIncluded(vrt.expiryDate) && vrt.expiryDate < todayStr) overdue++;
     });
     // Vehicle insurance expired
     (db.vehicleInsurance || []).forEach(vins => {
-      if (vins.expiryDate && vins.expiryDate < todayStr) overdue++;
+      if (isReminderDateIncluded(vins.expiryDate) && vins.expiryDate < todayStr) overdue++;
+    });
+    (db.rentalAgreements || []).forEach(agreement => {
+      if (agreement.status === 'Active' && isReminderDateIncluded(agreement.endDate) && agreement.endDate < todayStr) overdue++;
     });
 
     setOverdueCount(overdue);
