@@ -1,4 +1,5 @@
 import { createEmptyDatabase, isLegacySampleDatabase, DEFAULT_GOOGLE_SHEETS_URL } from './emptyDatabase.js';
+import { REMINDER_START_DATE } from './reminderPolicy.js';
 
 const STORAGE_KEY = 'mms_database';
 
@@ -103,6 +104,7 @@ function getSheetName(table) {
     documents: "Documents",
     reminders: "Reminders",
     activityLog: "ActivityLog",
+    propertyTaxes: "PropertyTaxes",
     settings: "Settings"
   };
   return mapping[table] || table;
@@ -133,7 +135,8 @@ function mapKeysToSheet(obj, table) {
           table === "financialTransactions" ? "Transaction ID" : 
           table === "documents" ? "Document ID" : 
           table === "reminders" ? "Reminder ID" : 
-          table === "activityLog" ? "Log ID" : "id",
+          table === "activityLog" ? "Log ID" :
+          table === "propertyTaxes" ? "Tax ID" : "id",
     "name": "Name",
     "phone": "Phone",
     "email": "Email",
@@ -213,6 +216,8 @@ function mapKeysToSheet(obj, table) {
     "user": "User",
     "action": "Action",
     "details": "Details",
+    "taxType": "Tax Type",
+    "taxYear": "Tax Year",
     "key": "Key",
     "value": "Value"
   };
@@ -496,6 +501,18 @@ function mapKeys(obj, table) {
       "Start Date": "startDate",
       "Notes": "notes"
     },
+    PropertyTaxes: {
+      "Tax ID": "id",
+      "Property ID": "propertyId",
+      "Tax Type": "taxType",
+      "Tax Year": "taxYear",
+      "Amount": "amount",
+      "Due Date": "dueDate",
+      "Paid Date": "paidDate",
+      "Status": "status",
+      "Receipt Link": "receiptLink",
+      "Notes": "notes"
+    },
     Tenants: {
       "Tenant ID": "id",
       "Property ID": "propertyId",
@@ -757,7 +774,7 @@ export async function syncFromGoogleSheets(sheetUrl, webAppUrl = '') {
     "PropertyLoans", "Utilities", "UtilityBills", "Maintenance", "Contractors", 
     "Borrowers", "PersonalLoans", "LoanPayments", "Vehicles", "VehicleLoans", 
     "ServiceTypes", "VehicleServices", "VehicleInspections", "VehicleRoadTax", 
-    "VehicleInsurance", "FinancialTransactions", "Documents", "Reminders", "ActivityLog", "Contacts", "Settings"
+    "VehicleInsurance", "FinancialTransactions", "Documents", "Reminders", "ActivityLog", "Contacts", "PropertyTaxes", "Settings"
   ];
 
   const db = {
@@ -872,7 +889,8 @@ function getSupabaseTableName(table) {
     vehicleRoadTax: "vehicle_road_tax",
     vehicleInsurance: "vehicle_insurance",
     financialTransactions: "financial_transactions",
-    activityLog: "activity_log"
+    activityLog: "activity_log",
+    propertyTaxes: "property_taxes"
   };
   return mapping[table] || table.toLowerCase();
 }
@@ -891,7 +909,8 @@ function getJsTableName(table) {
     vehicle_road_tax: "vehicleRoadTax",
     vehicle_insurance: "vehicleInsurance",
     financial_transactions: "financialTransactions",
-    activity_log: "activityLog"
+    activity_log: "activityLog",
+    property_taxes: "propertyTaxes"
   };
   return mapping[table] || table;
 }
@@ -921,7 +940,7 @@ export async function syncAllFromSupabase() {
     "propertyLoans", "utilities", "utilityBills", "contractors", "maintenance",
     "borrowers", "personalLoans", "loanPayments", "vehicles", "vehicleLoans",
     "vehicleServices", "vehicleInspections", "vehicleRoadTax", "vehicleInsurance",
-    "financialTransactions", "documents", "activityLog", "settings"
+    "financialTransactions", "documents", "activityLog", "propertyTaxes", "settings"
   ];
 
   // Keep connection credentials locally
@@ -1066,8 +1085,14 @@ export function getDynamicRentStatus(db, today) {
     const end = ra.endDate ? new Date(ra.endDate) : new Date(new Date().getFullYear() + 2, new Date().getMonth(), 1);
     const curr = new Date();
     
-    // We check months between start date and today
-    let checkDate = new Date(start.getFullYear(), start.getMonth(), 1);
+    // We check months between start date and today, starting no earlier than REMINDER_START_DATE
+    const [pYear, pMonth, pDay] = REMINDER_START_DATE.split('-').map(Number);
+    const policyStart = new Date(pYear, pMonth - 1, 1);
+    let startYearMonth = start;
+    if (startYearMonth < policyStart) {
+      startYearMonth = policyStart;
+    }
+    let checkDate = new Date(startYearMonth.getFullYear(), startYearMonth.getMonth(), 1);
     const limitDate = new Date(curr.getFullYear(), curr.getMonth(), 1);
     
     // Step size based on frequency

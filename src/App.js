@@ -4,7 +4,7 @@ import { isReminderDateIncluded } from './utils/reminderPolicy.js';
 import { 
   DashboardIcon, PropertyIcon, VehicleIcon, LoanIcon, 
   UtilityIcon, MaintenanceIcon, ReminderIcon, FinancialIcon, 
-  DocumentIcon, SettingsIcon, SunIcon, MoonIcon 
+  DocumentIcon, SettingsIcon, SunIcon, MoonIcon, AnalysisIcon 
 } from './components/Icons.js';
 
 // Component imports
@@ -18,6 +18,7 @@ import Reminders from './components/Reminders.js';
 import FinancialHub from './components/FinancialHub.js';
 import Documents from './components/Documents.js';
 import Settings from './components/Settings.js?v=20260808-google-sheets-1';
+import PropertyAnalysis from './components/PropertyAnalysis.js';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -77,6 +78,9 @@ export default function App() {
       });
       (freshDb.rentalAgreements || []).forEach(agreement => {
         if (agreement.status === 'Active' && isReminderDateIncluded(agreement.endDate) && agreement.endDate < todayStr) overdue++;
+      });
+      (freshDb.propertyTaxes || []).forEach(pt => {
+        if (pt.status === 'Pending' && isReminderDateIncluded(pt.dueDate) && pt.dueDate < todayStr) overdue++;
       });
       
       if (overdue > 0) {
@@ -223,6 +227,10 @@ export default function App() {
     (db.rentalAgreements || []).forEach(agreement => {
       if (agreement.status === 'Active' && isReminderDateIncluded(agreement.endDate) && agreement.endDate < todayStr) overdue++;
     });
+    // Property taxes overdue
+    (db.propertyTaxes || []).forEach(pt => {
+      if (pt.status === 'Pending' && isReminderDateIncluded(pt.dueDate) && pt.dueDate < todayStr) overdue++;
+    });
 
     setOverdueCount(overdue);
   };
@@ -275,6 +283,8 @@ export default function App() {
         return html`<${Reminders} />`;
       case 'financials':
         return html`<${FinancialHub} />`;
+      case 'analysis':
+        return html`<${PropertyAnalysis} />`;
       case 'documents':
         return html`<${Documents} />`;
       case 'settings':
@@ -294,6 +304,7 @@ export default function App() {
       case 'maintenance': return 'Maintenance Requests & Aduan';
       case 'reminders': return 'Reminders';
       case 'financials': return 'Financial Ledger & Cash Flow';
+      case 'analysis': return 'Property Data Analysis';
       case 'documents': return 'Document File Tracker';
       case 'settings': return 'App Settings & Contact Book';
       default: return 'Asset Hub';
@@ -310,6 +321,7 @@ export default function App() {
       case 'maintenance': return 'Manage repairs, costs, and contact information for local contractors.';
       case 'reminders': return 'Look at upcoming deadlines on lists or mapped onto a monthly calendar.';
       case 'financials': return 'View overall expenses vs income, property P&Ls, and annual car costs.';
+      case 'analysis': return 'Select properties and analyze financial performance, yields, and multi-year comparisons.';
       case 'documents': return 'Organize and access contracts, cover notes, and receipts saved on Google Drive.';
       case 'settings': return 'Configure preferences, connect live data, manage contacts, and export to CSV.';
       default: return '';
@@ -325,6 +337,7 @@ export default function App() {
     { id: 'maintenance', label: 'Maintenance', icon: MaintenanceIcon },
     { id: 'reminders', label: 'Reminders', icon: ReminderIcon, badge: overdueCount },
     { id: 'financials', label: 'Financial Hub', icon: FinancialIcon },
+    { id: 'analysis', label: 'Property Analysis', icon: AnalysisIcon },
     { id: 'documents', label: 'Documents', icon: DocumentIcon },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ];

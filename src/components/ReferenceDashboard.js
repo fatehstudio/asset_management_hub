@@ -31,6 +31,12 @@ export default function ReferenceDashboard({ navigateToTab }) {
         const tenant = (db.tenants || []).find(row => row.id === item.tenantId);
         add(item.endDate, `Rental Agreement Expiry: ${property?.name || 'Property'}`, tenant?.name ? `Tenant: ${tenant.name}` : 'Review or renew agreement', 'properties');
       });
+      (db.propertyTaxes || []).forEach(pt => {
+        if (pt.status === 'Pending' && pt.dueDate) {
+          const property = properties.find(row => row.id === pt.propertyId);
+          add(pt.dueDate, `Tax Due: ${pt.taxType}`, `${property?.name || 'Property'} (${pt.taxYear}) · ${currency} ${Number(pt.amount || 0).toLocaleString()}`, 'properties');
+        }
+      });
       (db.utilityBills || []).filter(item => item.status === 'Pending').forEach(item => {
         const utility = (db.utilities || []).find(row => row.id === item.utilityId);
         const property = properties.find(row => row.id === utility?.propertyId);

@@ -208,6 +208,22 @@ export default function Reminders() {
       }
     });
 
+    // 5b. Property Taxes
+    (db.propertyTaxes || []).forEach(pt => {
+      if (pt.status === 'Pending' && pt.dueDate) {
+        const prop = properties.find(p => p.id === pt.propertyId);
+        addReminder(
+          pt.dueDate,
+          `Property Tax: ${pt.taxType}`,
+          `Tax due for ${prop ? prop.name : 'Property'} (${pt.taxYear})`,
+          pt.amount,
+          'Pending',
+          'properties',
+          'Tax'
+        );
+      }
+    });
+
     // 6. Vehicles: Road tax, Insurance, Service, Inspection
     vehicles.forEach(v => {
       // Road Tax

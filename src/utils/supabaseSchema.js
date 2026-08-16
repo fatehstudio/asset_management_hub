@@ -22,6 +22,7 @@ drop table if exists contractors cascade;
 drop table if exists utility_bills cascade;
 drop table if exists utilities cascade;
 drop table if exists property_loans cascade;
+drop table if exists property_taxes cascade;
 drop table if exists rent_payments cascade;
 drop table if exists rental_agreements cascade;
 drop table if exists tenants cascade;
@@ -59,6 +60,20 @@ create table properties (
   "monthlyRent" numeric default 0,
   "depositCollected" numeric default 0,
   "startDate" text,
+  notes text
+);
+
+-- 3b. Create Property Taxes Table
+create table property_taxes (
+  id text primary key,
+  "propertyId" text references properties(id) on delete cascade,
+  "taxType" text not null, -- 'Cukai Tanah' or 'Cukai Pintu'
+  "taxYear" text not null, -- e.g. '2026'
+  amount numeric default 0,
+  "dueDate" text,
+  "paidDate" text,
+  "receiptLink" text,
+  status text,
   notes text
 );
 
@@ -374,6 +389,7 @@ on conflict (key) do update set value = excluded.value;
 alter table contacts disable row level security;
 alter table owners disable row level security;
 alter table properties disable row level security;
+alter table property_taxes disable row level security;
 alter table tenants disable row level security;
 alter table rental_agreements disable row level security;
 alter table rent_payments disable row level security;

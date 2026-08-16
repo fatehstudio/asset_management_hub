@@ -24,7 +24,7 @@ const DATA_TABLES = [
   'contractors', 'borrowers', 'personalLoans', 'loanPayments', 'vehicles',
   'vehicleLoans', 'vehicleServices', 'vehicleInspections', 'vehicleRoadTax',
   'vehicleInsurance', 'financialTransactions', 'documents', 'reminders',
-  'activityLog'
+  'activityLog', 'propertyTaxes'
 ];
 
 export function createEmptyDatabase(existingSettings = {}) {

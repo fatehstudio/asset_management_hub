@@ -12,6 +12,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
   const [loans, setLoans] = useState([]);
   const [utilities, setUtilities] = useState([]);
   const [maintenance, setMaintenance] = useState([]);
+  const [propertyTaxes, setPropertyTaxes] = useState([]);
   
   // UI states
   const [view, setView] = useState('list'); // 'list', 'detail', 'form-property', 'form-tenant', 'form-payment'
@@ -27,6 +28,9 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
   
   // Rent Payment Form fields
   const [paymentForm, setPaymentForm] = useState({ id: '', propertyId: '', date: new Date().toISOString().slice(0,10), dueBy: new Date().toISOString().slice(0,10), billingMonth: '', amount: 0, method: 'Bank Transfer', status: 'Paid', receiptLink: '' });
+
+  // Tax Form fields
+  const [taxForm, setTaxForm] = useState({ id: '', propertyId: '', taxType: 'Cukai Tanah', taxYear: new Date().getFullYear().toString(), amount: 0, dueDate: new Date().toISOString().slice(0,10), paidDate: new Date().toISOString().slice(0,10), status: 'Paid', receiptLink: '', notes: '' });
 
   useEffect(() => {
     loadData();
@@ -56,6 +60,7 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     setLoans(db.propertyLoans || []);
     setUtilities(db.utilities || []);
     setMaintenance(db.maintenance || []);
+    setPropertyTaxes(db.propertyTaxes || []);
   };
 
   const handleBack = () => {
@@ -92,6 +97,16 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
 
   const handleDeleteProperty = (id) => {
     if (confirm('Are you sure you want to delete this property and all its links?')) {
+      // Clean up linked property taxes
+      const db = getDb();
+      const linkedTaxes = (db.propertyTaxes || []).filter(pt => pt.propertyId === id);
+      linkedTaxes.forEach(pt => {
+        deleteItem('propertyTaxes', pt.id);
+        const tx = (db.financialTransactions || []).find(t => t.referenceId === pt.id);
+        if (tx) {
+          deleteItem('financialTransactions', tx.id);
+        }
+      });
       deleteItem('properties', id);
       handleBack();
     }
@@ -220,6 +235,76 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     }
 
     setView('detail');
+  };
+
+  const handleOpenFormTax = (propId, tax = null) => {
+    if (tax) {
+      setTaxForm({ ...tax });
+    } else {
+      setTaxForm({
+        id: '',
+        propertyId: propId,
+        taxType: 'Cukai Tanah',
+        taxYear: new Date().getFullYear().toString(),
+        amount: 0,
+        dueDate: new Date().toISOString().slice(0, 10),
+        paidDate: new Date().toISOString().slice(0, 10),
+        status: 'Paid',
+        receiptLink: '',
+        notes: ''
+      });
+    }
+    setView('form-tax');
+  };
+
+  const handleSaveTax = (e) => {
+    e.preventDefault();
+    const saved = saveItem('propertyTaxes', {
+      ...taxForm,
+      amount: Number(taxForm.amount),
+      paidDate: taxForm.status === 'Paid' ? taxForm.paidDate : '',
+      receiptLink: taxForm.status === 'Paid' ? taxForm.receiptLink : ''
+    });
+
+    const db = getDb();
+    const existingTx = (db.financialTransactions || []).find(t => t.referenceId === saved.id);
+
+    if (saved.status === 'Paid') {
+      const prop = properties.find(p => p.id === saved.propertyId);
+      const txData = {
+        date: saved.paidDate || saved.dueDate || new Date().toISOString().slice(0, 10),
+        type: 'Expense',
+        category: 'Tax',
+        amount: saved.amount,
+        referenceId: saved.id,
+        notes: `Tax Paid: ${prop ? prop.name : 'Property'} - ${saved.taxType} (${saved.taxYear})`
+      };
+
+      if (!existingTx) {
+        saveItem('financialTransactions', txData);
+      } else {
+        saveItem('financialTransactions', {
+          ...existingTx,
+          ...txData
+        });
+      }
+    } else if (existingTx) {
+      deleteItem('financialTransactions', existingTx.id);
+    }
+
+    setView('detail');
+  };
+
+  const handleDeleteTax = (taxId) => {
+    if (confirm('Are you sure you want to delete this tax record?')) {
+      deleteItem('propertyTaxes', taxId);
+      const db = getDb();
+      const tx = (db.financialTransactions || []).find(t => t.referenceId === taxId);
+      if (tx) {
+        deleteItem('financialTransactions', tx.id);
+      }
+      loadData();
+    }
   };
 
   const currency = getDb().settings?.currency || "RM";
@@ -424,12 +509,84 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
     `;
   }
 
+  if (view === 'form-tax') {
+    return html`
+      <div class="card" style="max-width: 600px; margin: 0 auto;">
+        <div class="modal-header">
+          <h2>${taxForm.id ? 'Edit Rekod Cukai' : 'Rekod Cukai Tanah & Cukai Pintu'}</h2>
+          <button class="modal-close" onClick=${() => setView('detail')}><${ArrowBackIcon} /></button>
+        </div>
+        <form onSubmit=${handleSaveTax}>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Jenis Cukai</label>
+              <select class="form-control" value=${taxForm.taxType} onChange=${e => setTaxForm({ ...taxForm, taxType: e.target.value })} required>
+                <option value="Cukai Tanah">Cukai Tanah</option>
+                <option value="Cukai Pintu">Cukai Pintu</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Tahun Cukai</label>
+              <input type="number" class="form-control" placeholder="e.g. 2026" value=${taxForm.taxYear} onInput=${e => setTaxForm({ ...taxForm, taxYear: e.target.value })} required />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Amount (${currency})</label>
+              <input type="number" step="0.01" class="form-control" value=${taxForm.amount || ''} onInput=${e => setTaxForm({ ...taxForm, amount: e.target.value })} required />
+            </div>
+            <div class="form-group">
+              <label>Tarikh Akhir Bayar</label>
+              <input type="date" class="form-control" value=${taxForm.dueDate || ''} onInput=${e => setTaxForm({ ...taxForm, dueDate: e.target.value })} required />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Payment Status</label>
+              <select class="form-control" value=${taxForm.status} onChange=${e => setTaxForm({ ...taxForm, status: e.target.value })} required>
+                <option value="Paid">Paid (Telah Dibayar)</option>
+                <option value="Pending">Pending (Belum Dibayar)</option>
+              </select>
+            </div>
+            ${taxForm.status === 'Paid' && html`
+              <div class="form-group" style="animation: fadeIn 0.25s ease;">
+                <label>Date Paid (Tarikh Bayar)</label>
+                <input type="date" class="form-control" value=${taxForm.paidDate || ''} onInput=${e => setTaxForm({ ...taxForm, paidDate: e.target.value })} required />
+              </div>
+            `}
+          </div>
+
+          ${taxForm.status === 'Paid' && html`
+            <div class="form-group" style="animation: fadeIn 0.25s ease; margin-top: 15px;">
+              <label>Link to Receipt Document (URL or Local path)</label>
+              <input type="text" class="form-control" placeholder="C:/receipts/..." value=${taxForm.receiptLink} onInput=${e => setTaxForm({ ...taxForm, receiptLink: e.target.value })} />
+            </div>
+          `}
+
+          <div class="form-group" style="margin-top: 15px;">
+            <label>Notes / Catatan</label>
+            <textarea class="form-control" rows="2" placeholder="e.g. Paid half-yearly or full year..." value=${taxForm.notes || ''} onInput=${e => setTaxForm({ ...taxForm, notes: e.target.value })}></textarea>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" onClick=${() => setView('detail')}>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Tax Record</button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
   if (view === 'detail' && activeProperty) {
     const propTenant = tenants.find(t => t.propertyId === activeProperty.id && t.status === 'Active');
     const propAgreement = rentalAgreements.find(ra => ra.propertyId === activeProperty.id && ra.status === 'Active');
     const propLoan = loans.find(l => l.propertyId === activeProperty.id);
     const propUtilities = utilities.filter(u => u.propertyId === activeProperty.id);
     const propMaint = maintenance.filter(m => m.propertyId === activeProperty.id);
+    const propTaxes = propertyTaxes.filter(pt => pt.propertyId === activeProperty.id)
+      .sort((a, b) => b.taxYear.localeCompare(a.taxYear) || (b.dueDate || '').localeCompare(a.dueDate || ''));
     
     // Get actual raw payments from database
     const rawPayments = rentPayments.filter(rp => rp.propertyId === activeProperty.id);
@@ -589,6 +746,53 @@ export default function Properties({ selectedPropertyId, setSelectedPropertyId, 
                               setPaymentForm({ ...rp });
                               setView('form-payment');
                             }}><${EditIcon} /></button>
+                          </td>
+                        </tr>
+                      `)}
+                    </tbody>
+                  </table>
+                `}
+              </div>
+            </div>
+
+            <!-- Property Taxes Ledger (Cukai Tanah & Cukai Pintu) -->
+            <div class="card">
+              <div class="card-title">
+                <span>Cukai Tanah & Cukai Pintu</span>
+                <button class="btn btn-secondary btn-sm" onClick=${() => handleOpenFormTax(activeProperty.id)}><${PlusIcon} /> Rekod Cukai Tanah / Pintu</button>
+              </div>
+              <div class="table-container">
+                ${propTaxes.length === 0 ? html`
+                  <p style="color: var(--text-muted); text-align: center; padding: 20px;">No property tax records saved.</p>
+                ` : html`
+                  <table class="mms-table">
+                    <thead>
+                      <tr>
+                        <th>Jenis Cukai</th>
+                        <th>Tahun</th>
+                        <th>Tarikh Akhir</th>
+                        <th>Tarikh Bayar</th>
+                        <th>Status</th>
+                        <th style="text-align: right;">Jumlah</th>
+                        <th style="text-align: right;">Tindakan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${propTaxes.map(pt => html`
+                        <tr key=${pt.id}>
+                          <td><span style="font-weight: 700; color: var(--text-primary);">${pt.taxType}</span></td>
+                          <td><span style="font-weight: 600;">${pt.taxYear}</span></td>
+                          <td>${pt.dueDate || '-'}</td>
+                          <td>${pt.status === 'Paid' ? (pt.paidDate || '-') : '-'}</td>
+                          <td>
+                            <span class="badge ${pt.status === 'Paid' ? 'badge-success' : 'badge-danger'}">${pt.status}</span>
+                          </td>
+                          <td style="text-align: right; font-weight: 700;">${currency} ${Number(pt.amount).toFixed(2)}</td>
+                          <td style="text-align: right;">
+                            <div style="display: flex; gap: 4px; justify-content: flex-end;">
+                              <button class="btn btn-secondary btn-sm" style="padding: 2px 6px;" onClick=${() => handleOpenFormTax(activeProperty.id, pt)}><${EditIcon} /></button>
+                              <button class="btn btn-danger btn-sm" style="padding: 2px 6px;" onClick=${() => handleDeleteTax(pt.id)}><${TrashIcon} /></button>
+                            </div>
                           </td>
                         </tr>
                       `)}
